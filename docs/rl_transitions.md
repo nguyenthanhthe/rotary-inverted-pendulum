@@ -1,230 +1,134 @@
-# RL Transitions, in Plain English
+# Đặc tả chuyển trạng thái RL (RL Transitions)
 
-What one `(s, a, r, s')` tuple in this project actually contains, end to
-end. Reference both for sim (`pendulum_env.py`) and real-device
-(`real_env.py`) environments — they're identical by design so a
-sim-trained checkpoint can keep learning on the real rig without any
-adapter.
+Tài liệu này giải thích chi tiết những gì một bộ chuyển trạng thái `(s, a, r, s')` trong dự án này thực sự chứa từ đầu đến cuối. Tài liệu này đóng vai trò tham chiếu cho cả môi trường mô phỏng (`pendulum_env.py`) và thực tế (`real_env.py`) — chúng được thiết kế giống hệt nhau để một checkpoint được huấn luyện trong mô phỏng có thể trực tiếp tiếp tục học trên thiết bị thực mà không cần bất kỳ bộ chuyển đổi nào.
 
-## The setup in one paragraph
+## Tóm tắt thiết lập trong một đoạn văn
 
-A rotary inverted pendulum (Furuta type). A horizontal arm rotates in
-the floor plane, driven by a stepper motor (the "motor" angle). At the
-end of that arm hangs a free-swinging pendulum (the "pendulum" angle).
-The goal is to swing the pendulum from hanging-down to upright and hold
-it there. Every 10 ms the policy sees the current state, picks a
-control nudge, and the world moves on.
+Hệ con lắc ngược quay (kiểu Furuta). Một cánh tay ngang quay trong mặt phẳng nằm ngang, được dẫn động bởi một động cơ bước (góc "motor"). Ở đầu cánh tay đó treo một con lắc quay tự do (góc "pendulum"). Mục tiêu là swing-up (đánh đu) con lắc từ vị trí treo thẳng đứng xuống dưới lên vị trí thẳng đứng hướng lên trên và giữ nó cân bằng ở đó. Mỗi 10 ms, chính sách quan sát trạng thái hiện tại, đưa ra một hành động điều khiển nhỏ, và hệ thống chuyển dịch sang trạng thái tiếp theo.
 
-## Conventions and frame
+## Các quy ước và hệ tọa độ
 
-- **Pendulum angle θ**: 0 means **upright**, ±π means hanging-down.
-  We use θ rather than the raw MuJoCo joint angle φ everywhere in the
-  observation and reward, because it makes "the goal" trivially `θ=0`.
-  Internally `θ = wrap_pi(φ − π)`.
-- **Motor angle**: 0 is the calibrated centre at startup. Positive =
-  counter-clockwise looking down. Mechanical hard stops at ±135°; we
-  clamp commanded targets to ±125° so the policy never asks for a stop
-  hit.
-- **Control rate**: configurable (`control_freq_hz`). Sim physics
-  integrates at 1 kHz under the hood; real env paces wall-clock to
-  match. The choice of rate is rig-specific and bounded by motor
-  bandwidth and pendulum dynamics — see
-  [`control_rate_selection.md`](control_rate_selection.md). The runtime
-  enforcement of whatever rate is chosen is described in
-  [`async_control_architecture.md`](async_control_architecture.md).
+- **Góc con lắc θ (Pendulum angle θ)**: 0 nghĩa là **thẳng đứng hướng lên** (upright), ±π nghĩa là treo thẳng đứng xuống dưới. Chúng tôi sử dụng θ thay vì góc khớp thô φ của MuJoCo ở mọi nơi trong quan sát (observation) và phần thưởng (reward), bởi vì nó giúp biểu diễn mục tiêu một cách đơn giản là `θ=0`. Về mặt nội bộ: `θ = wrap_pi(φ − π)`.
+- **Góc động cơ (Motor angle)**: 0 là tâm được hiệu chuẩn lúc khởi động. Giá trị dương = quay ngược chiều kim đồng hồ khi nhìn từ trên xuống. Giới hạn cơ khí dừng vật lý ở mức ±135°; chúng tôi cắt các mục tiêu lệnh trong khoảng ±125° để chính sách không bao giờ yêu cầu đâm vào giới hạn dừng.
+- **Tần số điều khiển**: có thể cấu hình (`control_freq_hz`). Động lực học mô phỏng tích phân ở tần số nội bộ 1 kHz; môi trường thực tế sẽ điều phối tốc độ thời gian thực để khớp với tần số này. Việc lựa chọn tần số phụ thuộc vào từng thiết bị và bị giới hạn bởi băng thông động cơ cũng như động lực học của con lắc — xem [`control_rate_selection.md`](control_rate_selection.md). Việc áp đặt tần số này trong thời gian chạy (runtime) được mô tả trong [`async_control_architecture.md`](async_control_architecture.md).
 
-## Observation `s` — what the policy sees (5 floats)
+## Trạng thái quan sát `s` — Những gì chính sách nhìn thấy (5 số thực float)
 
 ```
 s = [motor_pos, sin(θ), cos(θ), motor_vel, pendulum_vel]
 ```
 
-| Component | Units | Range | Meaning |
+| Thành phần | Đơn vị | Phạm vi | Ý nghĩa |
 |---|---|---|---|
-| `motor_pos` | rad | ±2.36 (= ±135°) | Current arm angle from centre |
-| `sin(θ)` | — | [−1, 1] | Sine of pendulum-from-upright |
-| `cos(θ)` | — | [−1, 1] | Cosine of pendulum-from-upright. **= 1 at the goal**, = −1 hanging down |
-| `motor_vel` | rad/s | ±200 | Arm angular velocity |
-| `pendulum_vel` | rad/s | ±200 | Pendulum angular velocity |
+| `motor_pos` | rad | ±2.36 (= ±135°) | Góc cánh tay hiện tại so với tâm |
+| `sin(θ)` | — | [−1, 1] | Sine của góc lệch con lắc so với phương thẳng đứng |
+| `cos(θ)` | — | [−1, 1] | Cosine của góc lệch con lắc so với phương thẳng đứng. **= 1 tại mục tiêu cân bằng**, = −1 khi treo thẳng đứng xuống dưới |
+| `motor_vel` | rad/s | ±200 | Vận tốc góc của cánh tay |
+| `pendulum_vel` | rad/s | ±200 | Vận tốc góc của con lắc |
 
-Why sine + cosine instead of θ directly? θ wraps at ±π, so the policy
-network would see a discontinuity right next to one of its operating
-points (hanging down). `(sin θ, cos θ)` is a continuous unit-circle
-embedding — no jump, no gradient cliff.
+Tại sao sử dụng sine + cosine thay vì góc θ trực tiếp? Góc θ bị nhảy giá trị tuần hoàn tại ±π, vì vậy mạng chính sách sẽ thấy một điểm gián đoạn ngay cạnh một trong những điểm hoạt động của nó (khi treo thẳng đứng xuống dưới). Bộ `(sin θ, cos θ)` là một biểu diễn liên tục trên đường tròn đơn vị — không bị nhảy giá trị, không có vách đá gradient.
 
-**How `s` is built**:
+**Cách trạng thái `s` được xây dựng**:
 
-- **Sim** (`pendulum_env.py::_obs`): read `qpos`/`qvel` directly from
-  MuJoCo. With domain randomisation on, we additionally quantise the
-  pendulum angle to AS5600 LSB (12-bit, ~0.0015 rad) and inject small
-  Gaussian noise on positions and velocities — so the sim observation
-  pipeline matches what the real rig actually delivers.
-- **Real** (`real_env.py::_build_obs`): poll the LowLevelServer over
-  serial → un-flip the firmware's sign convention → finite-difference
-  the velocities and run them through a 20 Hz low-pass filter. The
-  filter is critical: raw finite-difference at 100 Hz on a noisy
-  encoder is unusable.
+- **Trong mô phỏng** (`pendulum_env.py::_obs`): đọc trực tiếp `qpos`/`qvel` từ MuJoCo. Khi bật xáo trộn miền (DR), chúng tôi bổ sung việc lượng tử hóa góc con lắc theo LSB của cảm biến AS5600 (12-bit, ~0.0015 rad) và chèn nhiễu Gauss nhỏ vào vị trí và vận tốc — để quy trình quan sát trong mô phỏng khớp với những gì thiết bị thực tế cung cấp.
+- **Trên thiết bị thực** (`real_env.py::_build_obs`): truy vấn LowLevelServer qua cổng serial → đảo ngược quy ước dấu của firmware → tính hiệu sai phân (finite-difference) để ước lượng vận tốc và đưa chúng qua một bộ lọc thông thấp 20 Hz. Bộ lọc này cực kỳ quan trọng: tính hiệu sai phân thô ở tần số 100 Hz trên một encoder bị nhiễu là không thể sử dụng được.
 
-## Action `a` — what the policy outputs (1 float)
+## Hành động `a` — Đầu ra của chính sách (1 số thực float)
 
 ```
 a ∈ [−1, 1]
 ```
 
-The action is **not a torque or a position**. It's a normalised *delta*
-applied to the motor's commanded target each step:
+Hành động này **không phải là mô-men xoắn hay vị trí tuyệt đối**. Nó là một lượng thay đổi *nudge (delta)* đã chuẩn hóa được áp dụng cho vị trí động cơ mục tiêu ở mỗi bước:
 
 ```
 motor_target ← clip(motor_target + a · max_action_delta_rad, ±125°)
 ```
 
-So the policy steers the motor by issuing per-step nudges. The `clip`
-enforces the soft motor limit so the policy literally cannot command a
-hard-stop hit, even if it wants to.
+Do đó, chính sách lái động cơ bằng cách đưa ra các nhích nhỏ (nudges) ở mỗi bước. Hàm `clip` áp đặt giới hạn mềm cho động cơ để chính sách không thể ra lệnh đâm vào giới hạn dừng vật lý, ngay cả khi nó muốn.
 
-`max_action_delta_rad` is one of two coupled knobs (the other is
-`control_freq_hz`). Their product is the *slew rate* in rad/s, which
-must respect the motor's bandwidth — see
-[`control_rate_selection.md`](control_rate_selection.md) for the
-rationale and recipe.
+Tham số `max_action_delta_rad` là một trong hai nút tinh chỉnh đi đôi với nhau (nút kia là `control_freq_hz`). Tích của chúng là *slew rate* (tốc độ thay đổi mục tiêu) tính bằng rad/s, thông số này phải tuân thủ băng thông của động cơ — xem [`control_rate_selection.md`](control_rate_selection.md) để biết cơ sở lý thuyết và quy trình thực hiện.
 
-This action representation has two key benefits:
+Cách biểu diễn hành động này mang lại hai lợi ích chính:
 
-1. The stepper firmware (AccelStepper) accepts position targets, not
-   torques. Mapping action directly to a position-delta matches the
-   hardware interface.
-2. Smooth-by-construction: between consecutive steps the commanded
-   position can change by at most 0.1 rad, regardless of policy
-   craziness. This bounds the worst-case actuator slew rate and
-   protects the motor from policy exploration during training.
+1. Firmware động cơ bước (AccelStepper) chấp nhận các mục tiêu vị trí, không chấp nhận mô-men xoắn. Việc ánh xạ hành động trực tiếp thành delta vị trí khớp với giao tiếp phần cứng.
+2. Đảm bảo tính mượt mà về mặt cấu trúc: giữa hai bước liên tiếp, vị trí lệnh chỉ có thể thay đổi tối đa 0.1 rad, bất kể chính sách xuất ra giá trị cực đoan thế nào. Điều này giới hạn tốc độ thay đổi (slew rate) của cơ cấu chấp hành trong trường hợp xấu nhất và bảo vệ động cơ trong quá trình khám phá (exploration) khi huấn luyện.
 
-## Transition dynamics — going from `s` to `s'`
+## Động lực học chuyển trạng thái — đi từ `s` sang `s'`
 
-In **sim** (per step):
+Trong **mô phỏng** (mỗi bước):
 
-1. Apply the action delay queue (DR samples a 0–N-step delay scaled to
-   bracket the rig's measured transport delay; the action that takes
-   effect now might be the one the policy chose several steps ago —
-   modelling serial RTT + AccelStepper ramp).
-2. Update the commanded `motor_target` with the (delayed) action.
-3. Apply motor first-order lag (DR samples τ ∈ [0, 10] ms): the
-   `motor_applied` value fed to MuJoCo trails the commanded target by
-   an exponential of time-constant τ. With τ=0 it's instantaneous.
-4. Step MuJoCo physics for one control period at 1 ms substeps.
-5. Read out the new state, build `s'`, compute reward.
-6. Episode terminates if the motor hits the hard stop at ±135° (incurs
-   a `−5` penalty); truncates after `episode_length_s` (default 8 s).
+1. Áp dụng hàng đợi trễ hành động (DR lấy mẫu một khoảng trễ 0–N bước được nhân tỉ lệ để bao quanh độ trễ truyền thông đo được của thiết bị; hành động có hiệu lực bây giờ có thể là hành động chính sách đã chọn từ vài bước trước — mô phỏng RTT của serial + đoạn tăng tốc của AccelStepper).
+2. Cập nhật vị trí lệnh `motor_target` với hành động (đã bị trễ).
+3. Áp dụng độ trễ bậc một của động cơ (DR lấy mẫu τ ∈ [0, 10] ms): giá trị `motor_applied` cấp cho MuJoCo sẽ bám theo mục tiêu lệnh với một hàm mũ có hằng số thời gian τ. Với τ=0 thì phản hồi là tức thời.
+4. Chạy một bước vật lý của MuJoCo cho một chu kỳ điều khiển với các bước phụ (substeps) 1 ms.
+5. Đọc ra trạng thái mới, xây dựng `s'`, tính toán phần thưởng (reward).
+6. Tập huấn luyện kết thúc (terminate) nếu động cơ đâm vào giới hạn dừng vật lý ở ±135° (chịu phạt một lượng `−5`); cắt ngắn tập (truncate) sau khoảng thời gian `episode_length_s` (mặc định là 8 giây).
 
-In **real** (per step):
+Trên **thiết bị thực** (mỗi bước):
 
-1. Update the commanded `motor_target` with the action (no action delay
-   queue — the real hardware *is* the delay).
-2. Send `set_target(motor_target)` over serial.
-3. Sleep until the next tick (paces wall-clock to control rate).
-4. Read state from the rig: `(time_us, motor_pos, pendulum_pos)`.
-5. Finite-diff + low-pass filter the velocities.
-6. Build `s'`, compute reward.
-7. Terminate on |motor_pos| ≥ 135° (firmware also enforces this in
-   hardware as a backstop); truncate after `episode_length_s` (default
-   6 s during fine-tuning).
+1. Cập nhật vị trí lệnh `motor_target` với hành động (không có hàng đợi trễ hành động — phần cứng thực tế chính là độ trễ).
+2. Gửi lệnh `set_target(motor_target)` qua cổng serial.
+3. Chờ cho đến tick tiếp theo (điều phối thời gian thực khớp với tần số điều khiển).
+4. Đọc trạng thái từ thiết bị: `(time_us, motor_pos, pendulum_pos)`.
+5. Tính hiệu sai phân + lọc thông thấp để ước lượng vận tốc.
+6. Xây dựng `s'`, tính toán phần thưởng.
+7. Kết thúc tập khi |motor_pos| ≥ 135° (firmware cũng áp đặt giới hạn này ở phần cứng làm chốt chặn cuối cùng); cắt ngắn tập sau khoảng thời gian `episode_length_s` (mặc định là 6 giây trong quá trình tinh chỉnh).
 
-The key sim-to-real bridge is that **the firmware's transport delay,
-acceleration ramp, and stepper friction are what the sim's
-`action_delay_steps`, `motor_tau_s`, and joint friction parameters are
-modelling**. Domain randomisation samples those over plausible ranges
-each episode so the policy has seen enough variation to handle the
-real point.
+Cầu nối sim-to-real quan trọng ở đây là **độ trễ truyền thông của firmware, đoạn tăng tốc và ma sát của động cơ bước chính là những gì các tham số `action_delay_steps`, `motor_tau_s` và ma sát khớp của mô phỏng đang mô hình hóa**. Xáo trộn miền (DR) lấy mẫu các giá trị này trên các phạm vi hợp lý ở mỗi tập để chính sách được tiếp xúc với đủ sự biến đổi để có thể xử lý thiết bị thực tế.
 
-## Reward `r` — what we're rewarding
+## Phần thưởng `r` (Reward r) — những gì chúng ta đang khuyến khích
 
-The current reward is the **standard Quanser quadratic-cost form**
-(common in Furuta-pendulum literature):
+Phần thưởng hiện tại tuân theo **dạng chi phí toàn phương Quanser tiêu chuẩn (Quanser quadratic-cost form)** (phổ biến trong các tài liệu về con lắc Furuta):
 
 ```
 r = −[ θ² + k_θ̇·θ̇² + k_α·α² + k_α̇·α̇² + k_a·a² ]
 ```
 
-where:
+trong đó:
 
-- **θ** = pendulum-from-upright (rad). The dominant term: `θ²` is 0
-  at the goal and ≈ π² ≈ 9.87 at hanging-down.
-- **θ̇** = pendulum_vel. Small `k_θ̇=0.001` weight discourages
-  spinning through upright forever.
-- **α** = motor_pos (rad, sim's misnamed-from-Quanser variable).
-  `k_α=0.5` keeps the policy near centre.
-- **α̇** = motor_vel. `k_α̇=0.005` discourages frantic arm motion.
-- **a** = action ∈ [−1, 1]. `k_a=0.05` light penalty for jerky control.
+- **θ** = góc lệch con lắc so với phương thẳng đứng (rad). Thành phần chi phối chính: `θ²` bằng 0 tại mục tiêu và ≈ π² ≈ 9.87 khi treo thẳng đứng xuống dưới.
+- **θ̇** = vận tốc con lắc (pendulum_vel). Trọng số nhỏ `k_θ̇=0.001` để ngăn cản việc con lắc quay tròn liên tục qua điểm thẳng đứng.
+- **α** = góc động cơ (rad, biến này bị đặt tên nhầm từ Quanser trong mô phỏng). Trọng số `k_α=0.5` giữ chính sách hoạt động gần tâm.
+- **α̇** = vận tốc động cơ (motor_vel). Trọng số `k_α̇=0.005` ngăn cản cánh tay di chuyển quá điên cuồng.
+- **a** = hành động (action) ∈ [−1, 1]. Trọng số `k_a=0.05` phạt nhẹ đối với các thao tác điều khiển giật cục.
 
-Reward is **purely non-positive** — max 0 when fully balanced still at
-centre with no motor activity, around −10 per step at hanging-down.
-SAC handles negative rewards fine, and the all-negative signal makes
-"less negative" gradient toward upright unambiguous.
+Phần thưởng **luôn có giá trị không dương** — đạt cực đại bằng 0 khi con lắc đứng yên hoàn toàn ở tâm thẳng đứng và không có hoạt động của động cơ, và khoảng −10 mỗi bước khi treo thẳng đứng xuống dưới. Thuật toán SAC xử lý các phần thưởng âm rất tốt, và tín hiệu hoàn toàn âm giúp định hướng gradient "bớt âm hơn" về phía thẳng đứng một cách rõ ràng.
 
-**What the policy actually learns to do:**
+**Những gì chính sách thực tế học được để làm:**
 
-- *Far from upright*: Pump the arm back and forth. The `θ²` term
-  rewards getting upright; the `α²` and `α̇²` penalties keep the
-  pumping bounded so it doesn't slam into the limits.
-- *Near upright*: Hold still. The dominant `θ²` term goes near zero
-  there, leaving only the small velocity/action penalties as residuals
-  — so the policy is rewarded for any state close to (θ=0, θ̇=0,
-  α=0, α̇=0).
+- *Khi ở xa vị trí thẳng đứng*: Đánh đu cánh tay qua lại. Thành phần `θ²` khuyến khích việc đưa con lắc lên cao; các hình phạt `α²` và `α̇²` giữ cho chuyển động đánh đu nằm trong giới hạn để không đập vào các biên an toàn.
+- *Khi ở gần vị trí thẳng đứng*: Giữ yên. Thành phần chi phối `θ²` tiến gần về không ở đó, chỉ còn lại các hình phạt vận tốc/hành động nhỏ làm sai số dư — do đó chính sách được khuyến khích duy trì bất kỳ trạng thái nào gần với (θ=0, θ̇=0, α=0, α̇=0).
 
-If the policy gets the pendulum near upright but not still, the cost
-is dominated by `k_θ̇·θ̇²`. If it balances but with the arm wandering,
-the cost is dominated by `k_α·α²`. These weights are what shape the
-policy from "wobbly catch" toward "smooth hold".
+Nếu chính sách đưa được con lắc về gần thẳng đứng nhưng không giữ yên được, chi phí sẽ bị chi phối bởi `k_θ̇·θ̇²`. Nếu nó cân bằng được nhưng cánh tay bị trôi lệch xa tâm, chi phí sẽ bị chi phối bởi `k_α·α²`. Các trọng số này là những gì định hình chính sách đi từ việc "bắt giữ loạng choạng" hướng tới "giữ thăng bằng mượt mà".
 
-## Episode boundaries
+## Ranh giới tập huấn luyện (Episode boundaries)
 
-| Event | What happens | When |
+| Sự kiện | Hành động | Khi nào |
 |---|---|---|
-| **Reset** | Sim places pendulum hanging-down with small noise, motor at random `±0.7·motor_safe_limit`. Real disengages motor, waits `reset_settle_s` for pendulum to coast to rest, re-engages at current motor position. | Every episode |
-| **Termination** | `terminated = True`, reward gets a final `−5` penalty. Episode boundary. | Hard-stop hit (`|motor_pos|≥135°`) |
-| **Truncation** | `truncated = True`, reward unaffected. Episode boundary. | Time limit reached (8 s sim, 6 s real default) |
+| **Khởi động lại (Reset)** | Mô phỏng đặt con lắc treo thẳng xuống dưới với một nhiễu nhỏ, động cơ ở vị trí ngẫu nhiên `±0.7·motor_safe_limit`. Thiết bị thực ngắt động cơ, chờ `reset_settle_s` để con lắc dừng hẳn một cách tự do, kích hoạt lại động cơ ở vị trí hiện tại. | Mỗi tập |
+| **Kết thúc (Termination)** | `terminated = True`, phần thưởng nhận thêm một hình phạt cuối cùng là `−5`. Đóng tập. | Đâm vào giới hạn dừng vật lý (`|motor_pos|≥135°`) |
+| **Cắt ngắn (Truncation)** | `truncated = True`, phần thưởng không bị ảnh hưởng. Đóng tập. | Chạm giới hạn thời gian (8 giây trong mô phỏng, mặc định 6 giây trên thiết bị thực) |
 
-Truncation just bookkeeps the time limit — the value-of-future is still
-estimated normally. Termination signals the value should drop to zero
-("game over") and is reserved for the hard-stop bad outcome.
+Cắt ngắn tập chỉ ghi nhận giới hạn thời gian — giá trị tương lai vẫn được ước lượng bình thường. Kết thúc tập báo hiệu rằng giá trị tương lai sẽ giảm về 0 ("game over") và được dành riêng cho kết quả xấu là đập vào giới hạn dừng vật lý.
 
-## Why this representation works
+## Tại sao cách biểu diễn này hoạt động hiệu quả
 
-A few non-obvious choices, called out:
+Một vài lựa chọn thiết kế không hiển nhiên được làm rõ:
 
-- **`(sin θ, cos θ)` over θ**: avoids the wraparound discontinuity. The
-  policy sees a smooth manifold, not a step function.
-- **Action as delta-in-target, not absolute target**: by integrating
-  the policy output, we let the policy *steer* rather than *hop*. Slew
-  rate is bounded; motor can never be commanded to teleport.
-- **Reward purely negative**: simpler optimisation surface than mixed
-  positive/negative. SAC's entropy bonus handles exploration; we don't
-  need positive shaping bonuses.
-- **Same env for sim and real**: zero translation cost on
-  checkpoint-load. The replay buffer in Phase 4 fine-tuning fills with
-  real (s, a, r, s') tuples that look identical in shape to the sim
-  ones the policy already learned from.
+- **Sử dụng `(sin θ, cos θ)` thay vì θ**: tránh việc nhảy giá trị tuần hoàn khi xoay vòng. Chính sách nhìn thấy một không gian trạng thái mịn liên tục, không phải một hàm bước nhảy.
+- **Hành động là delta vị trí mục tiêu, không phải vị trí mục tiêu tuyệt đối**: bằng cách tích phân đầu ra của chính sách, chúng tôi cho phép chính sách *lái* động cơ thay vì *nhảy cóc*. Tốc độ thay đổi (slew rate) được giới hạn; động cơ không bao giờ bị ra lệnh dịch chuyển tức thời.
+- **Phần thưởng hoàn toàn âm**: tạo ra bề mặt tối ưu hóa đơn giản hơn so với việc trộn lẫn giá trị dương/âm. Phần thưởng entropy (entropy bonus) của SAC xử lý tốt việc khám phá; chúng tôi không cần thêm các phần thưởng định hình dương (positive shaping bonuses).
+- **Cùng một môi trường cho cả mô phỏng và thực tế**: chi phí chuyển giao bằng không khi tải checkpoint. Replay buffer trong quá trình tinh chỉnh Giai đoạn 4 được lấp đầy bởi các bộ chuyển trạng thái thực tế `(s, a, r, s')` trông giống hệt về mặt cấu trúc so với các bộ trong mô phỏng mà chính sách đã học từ trước.
 
-## Where things live in code
+## Vị trí trong mã nguồn
 
-| File | What it does |
+| Tệp | Chức năng |
 |---|---|
-| `pendulum_env.py` | The full sim env — MJCF model, DR, action delay, motor lag, reward. The canonical reference. |
-| `real_env.py` | Hardware version. Deliberately mirrors `pendulum_env.py`'s observation, action, and reward exactly. |
-| `run_policy.py` | Deployment-only client. Same observation pipeline as `real_env.py`, no learning. |
-| `async_control.py`, `finetune_async.py` | Runtime that *produces* transitions during fine-tuning at strict rate. Internals out of scope here — see [`async_control_architecture.md`](async_control_architecture.md). |
-| `finetune_real.py` | Deprecation shim → forwards to `finetune_async.main`. |
+| `pendulum_env.py` | Môi trường mô phỏng đầy đủ — mô hình MJCF, DR, trễ hành động, độ trễ động cơ, phần thưởng. Tài liệu tham khảo chuẩn. |
+| `real_env.py` | Phiên bản phần cứng. Gương soi thiết kế của `pendulum_env.py` khớp hoàn hảo về quan sát, hành động và phần thưởng. |
+| `run_policy.py` | Client chỉ dùng để triển khai thực tế. Cùng pipeline quan sát như `real_env.py`, không có tính năng học máy. |
+| `async_control.py`, `finetune_async.py` | Runtime *tạo ra* các chuyển trạng thái trong quá trình tinh chỉnh ở tần số nghiêm ngặt. Chi tiết bên trong nằm ngoài phạm vi tài liệu này — xem [`async_control_architecture.md`](async_control_architecture.md). |
+| `finetune_real.py` | Lớp chuyển tiếp tương thích ngược → chuyển tiếp cuộc gọi tới `finetune_async.main`. |
 
-Read `pendulum_env.py::step` and `pendulum_env.py::_obs` together for
-the canonical sim transition; read `real_env.py::step` and
-`real_env.py::_build_obs` to see the same flow against hardware.
-
-## See also
-
-- [`async_control_architecture.md`](async_control_architecture.md) — how
-  the rig's control loop is held to a strict rate during fine-tuning,
-  decoupled from SAC's gradient updates.
-- [`control_rate_selection.md`](control_rate_selection.md) — how to
-  pick `control_freq_hz` and `max_action_delta_rad` from sysid
-  measurements (motor bandwidth + pendulum natural frequency).
-- [`sysid_runbook.md`](sysid_runbook.md) — the measurement procedure
-  that produces the inputs both of those docs depend on.
+Hãy đọc đồng thời hàm `pendulum_env.py::step` và `pendulum_env.py::_obs` để xem bước chuyển trạng thái chuẩn trong mô phỏng; đọc `real_env.py::step` và `real_env.py::_build_obs` để xem luồng tương tự đối với phần cứng thực tế.

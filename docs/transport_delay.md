@@ -1,75 +1,57 @@
-# Transport delay: how it shrank, and how we measure it
+# Độ trễ truyền thông (Transport delay): Cách giảm thiểu và cách đo lường
 
-This rig used to have ~50 ms of laptop-to-motor transport delay. It's
-now ~14 ms. The path there was three fixes, each attacking a different
-layer of the pipeline. None of the three was about "delay" *per se*;
-they targeted other problems and the delay drop was the by-product.
+Thiết bị này từng có độ trễ truyền thông từ máy tính đến động cơ khoảng ~50 ms. Hiện tại con số này đã giảm xuống còn ~14 ms. Kết quả này đạt được nhờ ba lần sửa đổi, mỗi lần tập trung vào một lớp khác nhau của pipeline. Không có lần sửa đổi nào trong số ba lần này nhắm trực tiếp vào "độ trễ" *cơ bản*; chúng giải quyết các vấn đề khác và việc giảm độ trễ là một sản phẩm phụ (by-product) đi kèm.
 
-## The pipeline
+## Pipeline (Luồng xử lý)
 
 ```
 policy(obs) -> action  ┐
-                       │  (1) USB serial          ~1–5 ms
+                       │  (1) Cổng serial USB     ~1–5 ms
                        ▼
-                   Arduino loop  -- (2) Cmd dispatch
-                                 -- (3) Stepper driver / ISR
-                                 -- (4) Motor mechanical response
+                   Arduino loop  -- (2) Điều phối lệnh (Cmd dispatch)
+                                 -- (3) Driver động cơ bước / ISR
+                                 -- (4) Đáp ứng cơ học của động cơ
                        │
                        ▼
-                  AS5600 encoder -- (5) I²C read       ~5 ms
+                  Cảm biến AS5600 -- (5) Đọc qua I²C       ~5 ms
                        │
                        ▼
                  policy obs(t+1)
 ```
 
-Total round-trip transport delay = (1) + (2) + (3) + (4) + (5).
+Tổng độ trễ truyền thông khứ hồi (round-trip) = (1) + (2) + (3) + (4) + (5).
 
-## The three fixes (in chronological order)
+## Ba lần sửa đổi (theo trình tự thời gian)
 
-| Date       | Fix                                                                      | Layer it targets | Why                                                                                  | Side effect on delay                                                                            |
+| Ngày | Sửa đổi | Lớp tác động | Tại sao | Tác động phụ lên độ trễ |
 |------------|--------------------------------------------------------------------------|------------------|--------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------|
-| 2026-05-03 | `AccelStepper` → `FastAccelStepper` (commit `c46480d`)                   | (3) stepper      | Polled step-pulse timing in AccelStepper jittered above 50 k steps/s², causing step-skipping; firmware position diverged from reality. FastAccelStepper drives STEP from Timer1 OC1A ISR — honest pulses. Required moving STEP_PIN to pin 9. | Slight: ISR timing is more deterministic than polled, so jitter on layer (3) shrinks. Median delay roughly unchanged. |
-| 2026-05-16 | Action semantics: position-target → angular-acceleration (commit `396c5d4`) | (3) stepper      | Position commands forced a fresh trapezoidal land-on-target ramp each control tick (10–30 ms of mechanical lag per tick). Closed-loop sim-vs-real diverged at resonance; sim_upright=0.14 vs real_upright=0.73 on identical action sequences. Switching to `moveByAcceleration(int32 steps_s2, allow_reverse=true)` lets the motor integrate accel continuously across ticks, with smooth zero-crossing direction reversal. | **Big drop.** Removes the per-tick targeting ramp (10–30 ms). This is the dominant contributor to the 50 ms → ~14 ms reduction. |
-| 2026-05-16 | Observation extended with `prev_action` (commit `cae2a1b`)               | (1) policy       | Even after fixes 1 + 2 the remaining ~14 ms makes the system a POMDP from the policy's point of view — it can't tell whether obs(t) reflects action(t) or action(t-1). Adding `prev_action` to the obs restores the Markov property for the action pipeline. | None directly. Doesn't change the physical delay; lets the policy reason about it. |
+| 03/05/2026 | `AccelStepper` → `FastAccelStepper` (commit `c46480d`) | (3) động cơ bước | Việc thăm dò (polling) thời gian xung bước trong AccelStepper bị dao động khi vượt quá 50 ksteps/s², gây mất bước; vị trí của firmware bị lệch so với thực tế. FastAccelStepper điều khiển chân STEP từ ngắt Timer1 OC1A ISR — tạo ra các xung chuẩn xác. Yêu cầu chuyển chân STEP_PIN sang pin 9. | Nhẹ: Thời gian ISR ổn định hơn so với việc thăm dò tuần tự, giúp giảm dao động thời gian ở lớp (3). Độ trễ trung vị hầu như không đổi. |
+| 16/05/2026 | Ngữ nghĩa hành động: vị trí mục tiêu → gia tốc góc (commit `396c5d4`) | (3) động cơ bước | Các lệnh vị trí bắt buộc động cơ phải chạy lại đoạn tăng tốc hình thang (trapezoidal) để dừng tại mục tiêu ở mỗi tick điều khiển (tạo ra trễ cơ học 10–30 ms mỗi tick). Mô phỏng và thực tế bị lệch pha khi có cộng hưởng; điểm số upright mô phỏng đạt 0.14 so với thực tế đạt 0.73 trên các chuỗi hành động giống hệt nhau. Việc chuyển sang hàm `moveByAcceleration(int32 steps_s2, allow_reverse=true)` cho phép động cơ tích phân gia tốc liên tục qua các tick, với khả năng đảo chiều mượt mà khi đi qua điểm 0. | **Giảm mạnh.** Loại bỏ đoạn tăng tốc mục tiêu ở mỗi tick (10–30 ms). Đây là yếu tố đóng góp chính giúp giảm độ trễ từ 50 ms xuống còn ~14 ms. |
+| 16/05/2026 | Quan sát bổ sung thêm `prev_action` (commit `cae2a1b`) | (1) chính sách | Ngay cả sau các lần sửa đổi 1 + 2, độ trễ ~14 ms còn lại vẫn khiến hệ thống trở thành POMDP dưới góc nhìn của chính sách — nó không thể biết liệu obs(t) phản ánh hành động action(t) hay action(t-1). Việc thêm `prev_action` vào quan sát giúp khôi phục tính chất Markov cho pipeline hành động. | Không ảnh hưởng trực tiếp. Không làm thay đổi độ trễ vật lý; chỉ giúp chính sách hiểu và xử lý được nó. |
 
-## Current measurement (2026-05-16)
+## Phép đo hiện tại (16/05/2026)
 
-Two methods, same conclusion.
+Hai phương pháp đo, cùng một kết luận.
 
-### Method 1 — sysid_accel step test (pendulum held)
+### Phương pháp 1 — Thử nghiệm bước sysid_accel (giữ con lắc cố định)
 
-Recorded by `sysid_accel.py step` at 200 Hz logging while driving the
-firmware directly via `set_acceleration` calls. Motor responds within
-**one 200 Hz sample (≤ 5 ms)** of an accel-command step change. This
-measures layers (1) + (2) + (3) + (4) without the I²C/Python read leg.
+Được ghi lại bởi kịch bản `sysid_accel.py step` ở tần số ghi nhật ký 200 Hz trong khi điều khiển trực tiếp firmware qua các cuộc gọi `set_acceleration`. Động cơ đáp ứng trong vòng **một mẫu 200 Hz (≤ 5 ms)** khi lệnh gia tốc thay đổi dạng bước. Phương pháp này đo đạc các lớp (1) + (2) + (3) + (4) mà không tính đến lượt đọc I²C/Python.
 
-### Method 2 — real-rig deploy log half-step model fit
+### Phương pháp 2 — Khớp mô hình trễ nửa bước (half-step) từ nhật ký triển khai thực tế
 
-From `run_policy.py --log /tmp/pdfix.npz` running at the policy's 35 Hz
-control rate. Pick a step where the commanded accel changes sharply and
-look at the velocity delta two steps later:
+Từ kịch bản `run_policy.py --log /tmp/pdfix.npz` chạy ở tần số điều khiển 35 Hz của chính sách. Chọn một bước mà gia tốc lệnh thay đổi đột ngột và quan sát lượng thay đổi vận tốc Δv sau đó hai bước:
 
 ```
-idx 91: prev cmd = -37.5,  cmd = -149,  observed Δv = -2.69 rad/s
-        expected if 0-step delay         -4.25
-        expected if 1-step delay         -1.07
-        expected if ½-step delay  ✓      -2.66
+idx 91: cmd trước = -37.5,  cmd = -149,  Δv quan sát được = -2.69 rad/s
+        kỳ vọng nếu trễ 0 bước           -4.25
+        kỳ vọng nếu trễ 1 bước           -1.07
+        kỳ vọng nếu trễ ½ bước    ✓      -2.66
 ```
 
-Fits a **½-control-step delay model** to within filter noise. At 35 Hz
-control, that's **≈ 14 ms** of effective transport delay end-to-end —
-including the encoder read and Python decision time that method 1
-skips.
+Kết quả khớp với **mô hình trễ ½ bước điều khiển (½-control-step delay model)** trong phạm vi nhiễu của bộ lọc. Ở tần số điều khiển 35 Hz, con số đó **tương đương ≈ 14 ms** độ trễ truyền thông hiệu dụng từ đầu đến cuối — bao gồm cả thời gian đọc cảm biến và thời gian tính toán của Python mà phương pháp 1 bỏ qua.
 
-## Implications
+## Hệ quả
 
-- **DR ranges in `pendulum_env.py` are still position-mode calibrated.**
-  `DR_ACTION_DELAY_STEPS_RANGE = (1, 3)` was set when the real delay was
-  ~50 ms (1–3 steps at 35 Hz). Post-accel-mode reality is ~½ step.
-- Integer-step delay DR (sample 0 or 1) is a coarse fit to a fractional
-  delay. A continuous **action-lag** DR (first-order filter with random
-  tau ∈ ~[5, 20] ms) matches the real layer (3)+(4) dynamics more
-  directly and gives the optimiser a smoother gradient than 0-or-1
-  discrete sampling.
-- Curriculum stage 2/3 delay ranges should be tightened to bracket the
-  actual ~14 ms, not the historical 30–50 ms.
+- **Phạm vi DR trong `pendulum_env.py` vẫn được hiệu chuẩn theo chế độ vị trí (position-mode).** Hằng số `DR_ACTION_DELAY_STEPS_RANGE = (1, 3)` được thiết lập khi độ trễ thực tế là ~50 ms (1–3 bước ở tần số 35 Hz). Thực tế sau khi áp dụng chế độ gia tốc chỉ còn khoảng ~½ bước.
+- Lượng tử hóa trễ số nguyên (lấy mẫu 0 hoặc 1) là một phép khớp thô cho một độ trễ thập phân. Một DR **trễ hành động (action-lag)** liên tục (bộ lọc bậc một với hằng số tau ngẫu nhiên nằm trong khoảng ~[5, 20] ms) sẽ khớp trực tiếp hơn với động lực học thực tế của các lớp (3)+(4) và cung cấp cho bộ tối ưu hóa một gradient mượt mà hơn so với lấy mẫu rời rạc 0-hoặc-1.
+- Các phạm vi trễ của Giai đoạn 2/3 trong chương trình học nên được thu hẹp để bao quanh giá trị thực tế ~14 ms, thay vì giá trị lịch sử 30–50 ms.

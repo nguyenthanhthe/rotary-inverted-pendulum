@@ -1,284 +1,151 @@
-# On-device weight quantisation
+# Lượng tử hóa trọng số trên thiết bị (On-device weight quantisation)
 
-Notes on quantising the distilled student MLP for the Arduino Nano. The
-broader rationale (when to bother, end-to-end recipe, code-change scope)
-is in [`policy_improvement_ideas.md`](policy_improvement_ideas.md) under
-"On-device performance"; this file captures the **format choice** and
-the techniques that actually got int8 to work.
+Các ghi chú về việc lượng tử hóa mô hình mạng distilled student MLP cho Arduino Nano. Cơ sở lý thuyết rộng hơn (khi nào cần bận tâm, quy trình từ đầu đến cuối, phạm vi thay đổi mã nguồn) nằm trong [`policy_improvement_ideas.md`](policy_improvement_ideas.md) phần "Hiệu năng trên thiết bị"; tệp này trình bày về **lựa chọn định dạng** và các kỹ thuật thực tế để chạy được định dạng int8.
 
-The Arduino Nano runs an **AVR** ATmega328P. AVR is the family of 8-bit
-RISC microcontrollers originally designed by Alf-Egil Bogen and Vegard
-Wollan (hence "AVR" — *Alf and Vegard's RISC*) and currently sold by
-Microchip Technology after the Atmel acquisition. AVR has no FPU, so
-the choice of weight format is dominated by which integer multiplications
-the silicon can do natively.
+Arduino Nano sử dụng vi điều khiển **AVR** ATmega328P. AVR là dòng vi điều khiển RISC 8-bit ban đầu được thiết kế bởi Alf-Egil Bogen và Vegard Wollan (do đó có tên "AVR" — *Alf and Vegard's RISC*) và hiện được bán bởi Microchip Technology sau khi mua lại Atmel. AVR không có bộ tính toán số thực cứng FPU, vì vậy việc lựa chọn định dạng trọng số phụ thuộc hoàn toàn vào các phép nhân số nguyên mà phần cứng có thể thực hiện nguyên bản.
 
-## int8 vs int16 on AVR
+## int8 so với int16 trên AVR
 
-Speed and fidelity numbers:
+So sánh tốc độ và độ chính xác:
 
-| Format | Bytes/weight | Per-MAC cost | Quantisation granularity | Forward pass (1216 MAC) |
+| Định dạng | Số byte/trọng số | Chi phí mỗi phép MAC | Độ phân giải lượng tử hóa | Lượt truyền xuôi (Forward pass - 1216 MAC) |
 |---|---|---|---|---|
-| float32 | 4 | ~190 cycles (MUL + ADD, software) | ~7 decimal digits | ~14.5 ms |
-| **int8** | **1** | **~5 cycles** (1× MUL + acc) | **max(W) / 127** | **~0.4 ms (~36× faster)** |
-| int16 | 2 | ~15 cycles (4× MUL + accumulate) | max(W) / 32767 (~256× finer than int8) | ~1.1 ms (~13× faster) |
+| float32 | 4 | ~190 chu kỳ (MUL + ADD, mô phỏng bằng phần mềm) | ~7 chữ số thập phân | ~14.5 ms |
+| **int8** | **1** | **~5 chu kỳ** (1× MUL + tích lũy) | **max(W) / 127** | **~0.4 ms (~nhanh hơn 36 lần)** |
+| int16 | 2 | ~15 chu kỳ (4× MUL + tích lũy) | max(W) / 32767 (~mịn hơn 256 lần so với int8) | ~1.1 ms (~nhanh hơn 13 lần) |
 
-AVR has hardware `MUL` (8×8→16) and `MULS` (signed 8×8) but **no 16×16
-multiplier** — int16 multiplication is composed from four 8×8 MULs plus
-carries. So int16 is 3× slower per MAC than int8 even though the number
-of bytes only doubles.
+AVR có bộ nhân phần cứng `MUL` (8×8→16) và `MULS` (8x8 có dấu) nhưng **không có bộ nhân 16×16 phần cứng** — phép nhân int16 được cấu thành từ bốn phép nhân 8×8 MUL cộng với các phép cộng nhớ (carries). Do đó, int16 chậm hơn 3 lần trên mỗi phép MAC so với int8 dù số lượng byte chỉ tăng gấp đôi.
 
-## Decision
+## Quyết định
 
-**Use int8.** The hardware path is direct (a single `MULS` instruction
-per weight×activation product, two cycles), and the resulting 36×
-speedup over float32 is the whole reason to do quantisation in the first
-place. Quantisation-aware training (QAT) plus the techniques below
-closes the fidelity gap to negligible — this is the same recipe the
-embedded-NN ecosystem (TFLite Micro, ONNX Runtime Mobile, MobileNet
-papers) standardises on.
+**Sử dụng int8.** Đường dẫn phần cứng là trực tiếp (một lệnh `MULS` duy nhất cho mỗi tích trọng số × kích hoạt, mất hai chu kỳ), và tốc độ tăng 36 lần so với float32 là lý do chính để thực hiện lượng tử hóa ngay từ đầu. Huấn luyện nhận biết lượng tử hóa (Quantisation-aware training - QAT) kết hợp với các kỹ thuật bên dưới giúp thu hẹp khoảng cách độ chính xác xuống mức không đáng kể — đây cũng là quy trình chuẩn mà hệ sinh thái NN nhúng (TFLite Micro, ONNX Runtime Mobile, các bài báo MobileNet) chuẩn hóa.
 
-**int16 is the fallback** if int8 ever can't be made to hit the
-closed-loop balance behaviour of the float student. int16 with even
-post-training quantisation is essentially fidelity-equivalent to float
-(256× finer granularity than int8), so it's the safety net — but at
-3× the per-MAC cost, it shouldn't be the default.
+**int16 là phương án dự phòng** nếu int8 không thể đạt được hành vi cân bằng vòng kín của mô hình float student. int16 thậm chí với lượng tử hóa sau huấn luyện (post-training quantisation) về cơ bản có độ chính xác tương đương với số thực float (độ phân giải mịn hơn 256 lần so với int8), do đó nó là một lưới bảo hiểm an toàn — nhưng với chi phí MAC cao gấp 3 lần, nó không nên là lựa chọn mặc định.
 
-## What it took to make int8 actually work on this rig
+## Những gì cần thiết để int8 thực sự hoạt động trên thiết bị này
 
-A naive int8 + QAT pipeline (per-tensor scaling everywhere, weights and
-activations both in int8 range, no special handling of biases or input
-heterogeneity) gets stuck at **~0.70 mean upright** on this rig — the
-policy *catches* the pendulum reliably but can't *hold* it, drifting
-out of the calm attractor within a few seconds. Closing that gap to
-0.951 required layering several techniques on top of vanilla QAT. None
-are exotic; they're all canonical "make int8 work" tricks.
+Một pipeline int8 + QAT ngây thơ (chỉ nhân tỉ lệ cho mỗi tensor ở mọi nơi, trọng số và kích hoạt đều nằm trong phạm vi int8, không xử lý đặc biệt cho bias hoặc tính không đồng nhất của đầu vào) sẽ bị kẹt ở **điểm số trung bình thẳng đứng ~0.70** trên thiết bị này — chính sách *bắt* được con lắc một cách đáng tin cậy nhưng không thể *giữ* nó thẳng đứng, và sẽ trôi khỏi điểm thu hút tĩnh chỉ sau vài giây. Để thu hẹp khoảng cách đó lên mức 0.951 yêu cầu phải áp dụng kết hợp nhiều kỹ thuật bổ sung lên trên QAT thông thường. Không có kỹ thuật nào là kỳ dị; tất cả đều là các mẹo kinh điển để "làm cho int8 hoạt động".
 
-### 1. Quantisation-aware training (QAT)
+### 1. Huấn luyện nhận biết lượng tử hóa (QAT)
 
-Train the model with simulated int8 rounding inserted into the forward
-pass during training. The optimiser then learns weights that are
-*robust to the rounding errors int8 introduces*, instead of being
-surprised by them at deploy time.
+Huấn luyện mô hình với phép làm tròn int8 giả lập được chèn vào lượt truyền xuôi (forward pass) trong quá trình huấn luyện. Bộ tối ưu hóa (optimizer) sau đó sẽ học các trọng số *có khả năng chống chịu với sai số làm tròn do int8 gây ra*, thay vì bị bất ngờ bởi chúng khi triển khai thực tế.
 
-The simulation is "fake-quant + straight-through estimator": forward
-pass rounds activations and weights to the int8 grid, backward pass
-pretends the rounding was identity so gradients flow through normally.
+Cơ chế giả lập là "fake-quant + straight-through estimator": lượt truyền xuôi làm tròn các giá trị kích hoạt (activations) và trọng số (weights) về lưới int8, lượt lan truyền ngược (backward pass) giả vờ rằng phép làm tròn đó là hàm đồng nhất (identity) để các gradient lan truyền bình thường.
 
-### 2. Per-channel input quantisation
+### 2. Lượng tử hóa đầu vào theo từng kênh (Per-channel input quantisation)
 
-The five obs dimensions have wildly different ranges:
+Năm chiều quan sát (obs dimensions) có các phạm vi giá trị cực kỳ khác nhau:
 
-| Dim | Range | LSB at shared scale | LSB with per-channel |
+| Chiều quan sát | Phạm vi | LSB ở thang đo chung | LSB ở thang đo từng kênh |
 |---|---|---|---|
-| `motor_pos` | ±2.2 rad | 0.23 (12 distinct values) | 0.014 (164 values) |
-| `sin(theta)` | ±1.0 | 0.23 (8 distinct values) | 0.008 (256 values) |
-| `cos(theta)` | ±1.0 | 0.23 (8 distinct values) | 0.008 (256 values) |
+| `motor_pos` | ±2.2 rad | 0.23 (12 giá trị phân biệt) | 0.014 (164 giá trị phân biệt) |
+| `sin(theta)` | ±1.0 | 0.23 (8 giá trị phân biệt) | 0.008 (256 giá trị phân biệt) |
+| `cos(theta)` | ±1.0 | 0.23 (8 giá trị phân biệt) | 0.008 (256 giá trị phân biệt) |
 | `motor_vel` | ±15 rad/s | 0.23 | 0.029 |
 | `pen_vel` | ±30 rad/s | 0.23 | 0.229 |
 
-A *shared* obs scale, set by the largest-range dim (`pen_vel` reaching
-±30 rad/s during swing-up), crushes `sin(theta)` and `cos(theta)` to
-4 distinct int8 values right at the equilibrium where they need maximum
-precision. Giving each obs dim its **own** scale recovers ~30× finer
-LSB on the small-range dims without losing range on the big-range dims.
-This was the single biggest unlock — it's the difference between
-"can't hold balance" and "balances".
+Một thang đo quan sát *chung (shared)*, được thiết lập bởi chiều có phạm vi lớn nhất (`pen_vel` đạt tới ±30 rad/s trong quá trình swing-up), sẽ đè bẹp `sin(theta)` và `cos(theta)` xuống chỉ còn 4 giá trị int8 phân biệt ngay tại điểm cân bằng nơi chúng cần độ chính xác tối đa. Việc cung cấp cho mỗi chiều quan sát một thang đo **riêng** của nó giúp khôi phục độ mịn LSB gấp ~30 lần trên các chiều có phạm vi nhỏ mà không làm mất phạm vi hoạt động của các chiều có phạm vi lớn. Đây là cải tiến quan trọng nhất — tạo nên sự khác biệt giữa "không thể giữ cân bằng" và "cân bằng tốt".
 
-### 3. Per-row weight quantisation
+### 3. Lượng tử hóa trọng số theo từng hàng (Per-row weight quantisation)
 
-For each Linear layer, give each output neuron's row of weights its
-*own* scale rather than sharing a single scale across the whole weight
-matrix. Different output neurons have different weight magnitudes, and
-forcing them to share one scale wastes precision on the rows whose
-maximum is far below the global max. Standard TFLite-Micro pattern.
+Đối với mỗi lớp Tuyến tính (Linear layer), hãy cung cấp cho mỗi hàng trọng số của neuron đầu ra thang đo *riêng* của nó thay vì chia sẻ một thang đo duy nhất trên toàn bộ ma trận trọng số. Các neuron đầu ra khác nhau có độ lớn trọng số khác nhau, và việc ép chúng chia sẻ một thang đo chung sẽ lãng phí độ chính xác trên các hàng có giá trị cực đại thấp hơn nhiều so với giá trị cực đại toàn cục. Đây là mẫu thiết kế tiêu chuẩn của TFLite-Micro.
 
-The rescale to the next layer's int8 input becomes per-output-channel
-too — instead of one fixed-point multiplier `M_q15`, the Arduino has
-an array of them, looked up per output neuron during the matmul.
+Việc đổi thang đo (rescale) cho đầu vào int8 của lớp tiếp theo cũng trở thành theo từng kênh đầu ra — thay vì một hệ số nhân dấu phẩy cố định duy nhất `M_q15`, Arduino sẽ có một mảng các hệ số này, được tra cứu cho từng neuron đầu ra trong quá trình matmul.
 
-### 4. Bias quantisation to int32, not int8
+### 4. Lượng tử hóa bias thành int32, không phải int8
 
-Biases live in the int32 *accumulator* on the deployed path, where they
-get added to `sum_j (W_int8[i,j] × x_int8[j])` before rescale. The
-"step size" the bias rounds to is `s_w × s_x` (the accumulator unit),
-which is much smaller than 1 — typical bias values are integer
-multiples of `s_w × s_x` in the *thousands*.
+Các bias nằm trong bộ tích lũy int32 (accumulator) trên đường dẫn triển khai thực tế, nơi chúng được cộng vào `sum_j (W_int8[i,j] × x_int8[j])` trước khi đổi thang đo. "Kích thước bước" mà bias làm tròn tới là `s_w × s_x` (đơn vị của bộ tích lũy), nhỏ hơn nhiều so với 1 — các giá trị bias thông thường là bội số nguyên của `s_w × s_x` trong khoảng hàng *nghìn*.
 
-The first attempt used the same int8 fake-quant for biases as for
-weights, which **clamped them to ±127 × s_w × s_x**. For typical layer
-3 with `s_w × s_x ≈ 6e-4`, a bias of 0.1 → quantised to 170 → clamped
-to 127 → loses 25% of its value. Catastrophic. The fix is a separate
-"int32 fake-quant" that rounds to the grid but doesn't clamp. (We use
-±2³⁰ as a safety bound; biases are O(10²) at worst.)
+Lần thử nghiệm đầu tiên đã sử dụng cùng một kiểu fake-quant int8 cho bias như đối với trọng số, điều này **giới hạn chúng trong khoảng ±127 × s_w × s_x**. Đối với lớp thứ 3 thông thường có `s_w × s_x ≈ 6e-4`, một giá trị bias là 0.1 → được lượng tử hóa thành 170 → bị giới hạn về 127 → mất đi 25% giá trị của nó. Điều này gây ra lỗi nghiêm trọng. Giải pháp khắc phục là sử dụng một bộ "int32 fake-quant" riêng biệt giúp làm tròn về lưới nhưng không giới hạn (chúng tôi sử dụng ±2³⁰ làm giới hạn an toàn; các bias trong thực tế cùng lắm chỉ ở mức O(10²)).
 
-### 5. Skip pre-tanh quantisation
+### 5. Bỏ qua lượng tử hóa trước tanh (Skip pre-tanh quantisation)
 
-The output layer's activation goes through `tanh`. The first attempt
-quantised the pre-tanh value to int8 too (matching what a hypothetical
-LUT-based deploy would do). But the deploy path doesn't use a LUT — it
-dequantises the int32 accumulator straight to float and calls libm
-`tanhf`. So QAT shouldn't quantise pre-tanh either; doing so trains
-the weights to compensate for a precision loss the deploy never sees,
-which makes things worse.
+Kích hoạt của lớp đầu ra đi qua hàm `tanh`. Lần thử nghiệm đầu tiên đã lượng tử hóa giá trị trước tanh thành int8 (khớp với những gì một triển khai dựa trên bảng tra cứu LUT giả định). Nhưng đường dẫn triển khai thực tế không sử dụng bảng LUT — nó giải lượng tử hóa (dequantise) bộ tích lũy int32 trực tiếp thành float và gọi hàm thư viện `tanhf` của libm. Do đó, QAT cũng không nên lượng tử hóa trước tanh; việc làm này chỉ huấn luyện các trọng số bù đắp cho một phần mất mát độ chính xác mà thực tế triển khai không bao giờ gặp phải, khiến kết quả tệ hơn.
 
-`tanh` is called once per inference on the AVR (~200 cycles) so a
-float-based final layer is essentially free.
+Hàm `tanh` được gọi một lần cho mỗi lượt suy luận trên AVR (mất khoảng ~200 chu kỳ), do đó một lớp cuối cùng dựa trên số thực float về cơ bản là miễn phí.
 
-### 6. Layer-1 absorbing
+### 6. Hấp thụ Lớp 1 (Layer-1 absorbing)
 
-Per-channel input quantisation (trick 2) gives each obs dim its own
-scale `s_obs[j]`. Per-row weight quantisation (trick 3) gives each
-output row its own scale `s_w[i]`. Combined, the matmul `y = Wx + b`
-expands to:
+Lượng tử hóa đầu vào theo từng kênh (mẹo 2) cung cấp cho mỗi chiều quan sát thang đo riêng `s_obs[j]`. Lượng tử hóa trọng số theo từng hàng (mẹo 3) cung cấp cho mỗi hàng đầu ra thang đo riêng `s_w[i]`. Khi kết hợp lại, phép nhân ma trận `y = Wx + b` được mở rộng thành:
 
 ```
 y[i] = sum_j (s_w[i] × W_int[i,j]) × (s_obs[j] × x_int[j])
      = sum_j  s_w[i] × s_obs[j] × W_int[i,j] × x_int[j]
 ```
 
-Each term has a *different* scale (`s_w[i] × s_obs[j]`), so we can't
-factor a common multiplier and apply it once after the sum. That would
-break the simple "int matmul + per-row rescale" pattern that makes int8
-fast on AVR.
+Mỗi số hạng có một thang đo *khác nhau* (`s_w[i] × s_obs[j]`), do đó chúng ta không thể nhóm một hệ số nhân chung và áp dụng nó một lần sau khi tính tổng. Điều đó sẽ phá vỡ mẫu thiết kế đơn giản "nhân ma trận số nguyên + đổi thang đo theo hàng" giúp int8 chạy nhanh trên AVR.
 
-The trick: at *export time* (not at runtime), pre-multiply the weights
-by the per-channel input scales:
+Giải pháp: tại *thời điểm xuất mô hình* (chứ không phải lúc runtime), hãy nhân trước các trọng số với thang đo đầu vào của từng kênh tương ứng:
 
 ```
-W_eff[i,j] = W[i,j] × s_obs[j]                ← columns stretched by their input scale
-W_eff_int[i,j] = round(W_eff[i,j] / s_w_eff[i])   ← then per-row quantise
+W_eff[i,j] = W[i,j] × s_obs[j]                ← các cột được kéo giãn theo thang đo đầu vào của chúng
+W_eff_int[i,j] = round(W_eff[i,j] / s_w_eff[i])   ← sau đó lượng tử hóa theo từng hàng
 ```
 
-Then the Arduino runs ordinary int8 matmul + per-row rescale:
+Khi đó Arduino chỉ cần chạy phép nhân ma trận int8 thông thường + đổi thang đo theo hàng:
 
 ```
 accum[i] = sum_j  W_eff_int[i,j] × x_int[j]
 y[i]     = accum[i] × s_w_eff[i]
 ```
 
-Same answer, but the per-channel input scales have been "absorbed" into
-the weight matrix. The Arduino never sees `s_obs` directly at runtime;
-that information is folded into `W_eff_int` at compile time. Free at
-runtime, just a bit of extra work in `export_weights_quantised.py`.
+Kết quả trả về là như nhau, nhưng thang đo đầu vào của từng kênh đã được "hấp thụ" vào ma trận trọng số. Arduino không bao giờ nhìn thấy `s_obs` trực tiếp khi chạy; thông tin đó đã được tích hợp vào `W_eff_int` tại thời điểm biên dịch. Điều này giúp tiết kiệm tài nguyên khi chạy, chỉ cần thêm một chút xử lý trong tệp `export_weights_quantised.py`.
 
-## Final result
+## Kết quả cuối cùng
 
-End-to-end on the rig with all six tricks layered together:
+Thử nghiệm từ đầu đến cuối trên thiết bị thực với tất cả 6 mẹo được áp dụng cùng nhau:
 
-| Variant | val_mse | Mean upright (tethered) |
+| Phiên bản | val_mse | Trung bình thẳng đứng (tethered) |
 |---|---|---|
-| Float H=16 (production reference) | 0.040 | 0.946 |
-| Naive int8 H=16 (per-tensor everything) | 0.080 | 0.706 |
-| Naive int8 H=32 (more capacity, same noise) | 0.088 | 0.696 |
-| **Per-channel int8 H=16** (with all tricks) | **0.045** | **0.934** |
-| **Per-channel int8 H=32** (with all tricks) | **0.040** | **0.951** |
+| Float H=16 (tham chiếu sản xuất) | 0.040 | 0.946 |
+| Naive int8 H=16 (lượng tử hóa chung cho mọi thứ) | 0.080 | 0.706 |
+| Naive int8 H=32 (tăng dung lượng, cùng mức nhiễu) | 0.088 | 0.696 |
+| **Per-channel int8 H=16** (đầy đủ các mẹo) | **0.045** | **0.934** |
+| **Per-channel int8 H=32** (đầy đủ các mẹo) | **0.040** | **0.951** |
 
-**Production:** int8 H=32 with QAT + tricks 1–6, scoring 0.951 mean
-upright tethered — within trial-to-trial noise of the float baseline,
-at ~0.4 ms inference on the AVR (vs ~15 ms float). 1.5 KB of weights
-(4× smaller than float). On-device int8 is the standalone-deployment
-path going forward. The float build (`#define POLICY_QUANTISED`
-unset) is preserved as the comparison reference.
+**Sản xuất:** Phiên bản int8 H=32 với QAT + các mẹo 1–6, đạt điểm số trung bình thẳng đứng 0.951 khi cắm máy tính — nằm trong phạm vi nhiễu ngẫu nhiên giữa các lần thử so với baseline float, tốc độ suy luận đạt ~0.4 ms trên AVR (so với ~15 ms của float). Kích thước trọng số chỉ 1.5 KB (nhỏ hơn 4 lần so với float). Phiên bản int8 trên thiết bị là lộ trình triển khai chạy độc lập trong tương lai. Bản build float (khi bỏ định nghĩa `#define POLICY_QUANTISED`) được giữ lại làm tham chiếu so sánh.
 
-One observable difference at deploy: the int8 student tends to land at
-the "active correction" attractor (small but persistent motor
-oscillations during balance) while the float student more often lands
-at the "calm" attractor (motor essentially stationary at a fixed
-offset). Both balance equivalently well; the choice is set by SAC
-training noise — see [`control_rate_selection.md`](control_rate_selection.md)
-for the attractor split's underlying dynamics.
+Một khác biệt có thể quan sát được khi triển khai: học sinh int8 có xu hướng rơi vào điểm thu hút "hiệu chỉnh tích cực" (dao động nhỏ nhưng liên tục của động cơ khi cân bằng) trong khi học sinh float thường rơi vào điểm thu hút "tĩnh" (động cơ cơ bản đứng yên ở một góc lệch cố định). Cả hai đều cân bằng tốt như nhau; lựa chọn này bị chi phối bởi nhiễu huấn luyện SAC — xem [`control_rate_selection.md`](control_rate_selection.md) để biết động lực học nền tảng của việc phân chia điểm thu hút này.
 
-## Why bother — what int8 actually unlocks
+## Tại sao cần bận tâm — int8 thực sự mang lại điều gì
 
-Fair question once we've seen them side-by-side: float H=16 already
-balances at 0.95 with calmer motor behaviour, so what does the 36×
-faster int8 path buy on *this* rig?
+Một câu hỏi hợp lý khi đặt chúng cạnh nhau: phiên bản float H=16 đã cân bằng ở mức 0.95 với hành vi động cơ êm hơn, vậy đường dẫn int8 nhanh hơn 36 lần mang lại lợi ích gì cho thiết bị *này*?
 
-For the immediate task (balance + swing-up at 35 Hz on the markovian
-obs we have), almost nothing — float H=16 has plenty of latency
-margin and the calm attractor it tends to land in is qualitatively
-nicer than the int8 student's active correction. The two practical
-reasons quantisation matters here anyway:
+Đối với tác vụ hiện tại (cân bằng + swing-up ở tần số 35 Hz với các quan sát Markovian hiện có), hầu như không mang lại lợi ích gì — phiên bản float H=16 có thừa khoảng dự phòng về độ trễ và điểm thu hút tĩnh của nó tốt hơn về mặt chất lượng so với hiệu chỉnh tích cực của học sinh int8. Hai lý do thực tế khiến lượng tử hóa vẫn quan trọng ở đây là:
 
-### 1. Bigger inputs and richer architectures aren't gated by latency
+### 1. Các đầu vào lớn hơn và kiến trúc mạng phong phú hơn không bị giới hạn bởi độ trễ
 
-The float H=16 student takes ~5 ms per inference, well inside the
-28.6 ms control-tick budget. Most expansions we might want push
-that number close to or past the budget:
+Học sinh float H=16 mất ~5 ms cho mỗi lượt suy luận, nằm gọn trong quỹ thời gian 28.6 ms của tick điều khiển. Hầu hết các mở rộng mạng mà chúng ta muốn thử nghiệm sau này sẽ đẩy con số đó sát hoặc vượt quá quỹ thời gian này:
 
-| Architecture change | Float inference | Int8 inference |
+| Thay đổi kiến trúc | Suy luận Float | Suy luận Int8 |
 |---|---|---|
-| Frame stacking (N=4 → 20-dim obs, MLP H=32) | ~7 ms | ~0.3 ms |
-| GRU H=16 (recurrent layer) | ~25 ms | ~1 ms |
-| MLP H=64 (richer feedforward) | ~50 ms | ~1.5 ms |
+| Xếp chồng khung hình (Frame stacking) (N=4 → 20 chiều quan sát, MLP H=32) | ~7 ms | ~0.3 ms |
+| GRU H=16 (lớp tuần hoàn) | ~25 ms | ~1 ms |
+| MLP H=64 (mạng truyền thẳng phong phú hơn) | ~50 ms | ~1.5 ms |
 
-**Honest caveat about the upside**: we can't claim any of those
-expansions *would* improve this rig. The current float student
-already scores 0.95+ tethered, which is plausibly bumping against
-the hardware noise floor (12-bit AS5600 ≈ 0.09° resolution,
-AccelStepper microstep quantisation ≈ 0.225°, bearing transients).
-A GRU *could* learn to self-calibrate encoder drift, but the rig
-doesn't visibly suffer from it. Frame stacking *could* smooth
-velocity estimates, but the obs already includes filtered velocity.
-Whether either gives a measurable performance gain is hopeful, not
-proven.
+**Cảnh báo trung thực về tiềm năng**: chúng ta không thể khẳng định chắc chắn rằng bất kỳ mở rộng nào trong số này *sẽ* cải thiện hiệu suất thiết bị. Học sinh float hiện tại đã đạt điểm số 0.95+ khi cắm máy tính, mức độ này có khả năng đã chạm trần nhiễu phần cứng (AS5600 12-bit ≈ độ phân giải 0.09°, lượng tử hóa vi bước AccelStepper ≈ 0.225°, quá trình chuyển đổi của vòng bi). Mạng GRU *có thể* học cách tự hiệu chuẩn độ trôi lệch của encoder, nhưng thiết bị thực tế không cho thấy dấu hiệu bị ảnh hưởng nghiêm trọng bởi lỗi này. Xếp chồng khung hình *có thể* làm mịn các ước tính vận tốc, nhưng đầu vào hiện tại đã bao gồm vận tốc được lọc. Việc các cải tiến này có mang lại hiệu năng tốt hơn đo đạc được hay không chỉ là hy vọng, chưa được chứng minh.
 
-So the honest framing: int8 is **infrastructure that doesn't
-preclude future experiments**, not infrastructure that guarantees
-gains today. The day we want to try frame stacking (~one day of
-work) or a GRU (multi-day framework migration since SB3 doesn't
-ship recurrent SAC — would need CleanRL or Tianshou), the inference
-budget will already be there. Without int8, both experiments are
-gated by inference time even on this microscopic policy.
+Vì vậy, nhận định trung thực là: int8 là **cơ sở hạ tầng để không ngăn cản các thử nghiệm trong tương lai**, chứ không phải cơ sở hạ tầng đảm bảo cải thiện hiệu năng ngay hôm nay. Vào ngày chúng ta muốn thử xếp chồng khung hình (~một ngày làm việc) hoặc mạng GRU (sẽ mất nhiều ngày di chuyển framework vì SB3 không đi kèm SAC tuần hoàn — sẽ cần dùng CleanRL hoặc Tianshou), quỹ thời gian suy luận đã có sẵn ở đó. Nếu không có int8, cả hai thử nghiệm này đều bị chặn bởi thời gian suy luận ngay cả trên chính sách siêu nhỏ này.
 
-### 2. Educational / portfolio value
+### 2. Giá trị học tập / hồ sơ dự án (portfolio)
 
-A working int8-on-AVR pipeline is the canonical mobile-ML deployment
-recipe in miniature — a project credential and a natural climax for
-the "how far down does this rabbit hole go" arc.
+Một pipeline int8-chạy-trên-AVR hoạt động hoàn chỉnh chính là mô hình thu nhỏ của quy trình triển khai ML di động chuẩn — một điểm cộng lớn cho năng lực dự án và là điểm đích tự nhiên cho hành trình khám phá xem công nghệ này có thể đi sâu đến mức nào.
 
-## Why anyone quantises at all (broader context)
+## Tại sao người ta cần lượng tử hóa (bối cảnh rộng hơn)
 
-For *this* rig, the int8 speedup is the rare case where the benefit
-shows up directly in compute time, because the ATmega328P has no FPU
-— every float multiply is software-emulated, so int8's hardware
-multiply path is roughly 36× faster. On modern hardware (a phone, a
-server GPU, even a Raspberry Pi), float math is fast and the speedup
-looks much more subtle. The technique is *everywhere* in production
-ML anyway, because three other forces start to dominate:
+Đối với thiết bị *này*, tốc độ tăng của int8 là trường hợp hiếm hoi lợi ích thể hiện trực tiếp ở thời gian tính toán, bởi vì chip ATmega328P không có FPU — mỗi phép nhân số thực float đều phải giả lập bằng phần mềm, do đó đường dẫn nhân phần cứng của int8 nhanh hơn khoảng 36 lần. Trên phần cứng hiện đại (điện thoại, GPU máy chủ, hoặc thậm chí Raspberry Pi), tính toán số thực float rất nhanh và tốc độ tăng của int8 thể hiện tinh tế hơn. Tuy nhiên, kỹ thuật này vẫn xuất hiện ở *mọi nơi* trong môi trường chạy thực tế của ML, bởi vì ba yếu tố khác bắt đầu chiếm ưu thế:
 
-- **Memory bandwidth, not compute, is the bottleneck on accelerators.**
-  An A100 can do ~10 TFLOPS of fp32 but only fetches ~2 TB/s from
-  HBM. A 70 B-parameter LLM at fp32 (280 GB) takes ~140 ms *just to
-  load the weights through memory once*. At int4 (35 GB) the same
-  fetch is ~17 ms. The arithmetic doesn't get cheaper, but feeding
-  the silicon does — and that's almost always the binding constraint.
-- **Energy and battery life.** An int8 multiply uses roughly 4× less
-  energy than an fp32 one (silicon area + switching activity). For
-  server fleets serving billions of inferences a day, that's millions
-  of pounds of electricity. For battery-powered devices it's the
-  difference between an hour and a day of usable inference.
-- **Specialised hardware paths.** NVIDIA Tensor Cores, Apple's Neural
-  Engine, Google TPUs all have *much* faster int8 / int4 / fp8
-  pipelines than fp32 — typically 4–8× the throughput. The whole
-  reason on-device LLMs (phones running Llama-3, MacBooks running
-  Mistral) exist is that quantisation maps the model into the
-  silicon's fast paths. Without int4, a 70 B model wouldn't fit on
-  a 64 GB MacBook in the first place.
+- **Băng thông bộ nhớ (Memory bandwidth), chứ không phải tính toán, là điểm nghẽn trên các bộ tăng tốc.** Một card đồ họa A100 có thể thực hiện ~10 TFLOPS fp32 nhưng chỉ lấy được ~2 TB/s dữ liệu từ bộ nhớ HBM. Một mô hình ngôn ngữ lớn LLM 70 tỷ tham số (70B) ở định dạng fp32 (dung lượng 280 GB) sẽ mất ~140 ms *chỉ để tải các trọng số qua bộ nhớ một lần*. Ở định dạng int4 (35 GB), lượt tải tương tự chỉ mất ~17 ms. Phép tính số học không rẻ hơn, nhưng việc nạp dữ liệu cho chip thì nhanh hơn — và đó hầu như luôn là ràng buộc chính.
+- **Năng lượng và tuổi thọ pin.** Một phép nhân int8 tiêu thụ năng lượng ít hơn khoảng 4 lần so với phép nhân fp32 (diện tích silicon + hoạt động chuyển mạch). Đối với các trung tâm dữ liệu phục vụ hàng tỷ lượt suy luận mỗi ngày, điều này giúp tiết kiệm hàng triệu bảng tiền điện. Đối với các thiết bị chạy bằng pin, nó tạo ra sự khác biệt giữa một giờ và một ngày sử dụng suy luận.
+- **Các đường dẫn phần cứng chuyên dụng.** Nhân Tensor Cores của NVIDIA, Neural Engine của Apple, hay TPUs của Google đều có các đường dẫn int8 / int4 / fp8 nhanh hơn *nhiều* so với fp32 — thông thường gấp 4–8 lần hiệu năng. Lý do duy nhất các mô hình LLM trên thiết bị (điện thoại chạy Llama-3, MacBook chạy Mistral) tồn tại là nhờ lượng tử hóa ánh xạ mô hình vào các đường dẫn nhanh của phần cứng chip. Nếu không có int4, một mô hình 70B thậm chí còn không vừa bộ nhớ RAM của một chiếc MacBook 64 GB ngay từ đầu.
 
-So on a tiny MCU the win is **compute time** (no FPU); on a phone
-it's **power and memory size**; in the cloud it's **$$/token and
-latency**. The technique is the same; what binds varies with the
-hardware:
+Vì vậy, trên một vi điều khiển nhỏ, lợi ích thu được là **thời gian tính toán** (không có FPU); trên điện thoại là **năng lượng và kích thước bộ nhớ**; trên điện toán đám mây là **tối ưu hóa chi phí ($$/token) và độ trễ**. Kỹ thuật áp dụng là như nhau; ràng buộc thực tế sẽ thay đổi theo phần cứng:
 
-| Where it runs | What's actually being saved | Why people quantise |
+| Nơi chạy mô hình | Những gì thực sự được tiết kiệm | Tại sao người ta lượng tử hóa |
 |---|---|---|
-| **Arduino Nano (us)** | Software-float multiply cycles | Compute is the binding constraint |
-| **Phone running Llama-3** | RAM (4× smaller weights) + Neural Engine throughput | A 70 B fp32 model = 280 GB. Doesn't fit. Period. |
-| **Cloud serving GPT-class** | Memory bandwidth (HBM fetches), $$/token | int4/int8 → 4–8× more tokens per GPU-hour |
-| **Edge device (drone, doorbell, watch)** | Battery life | int8 multiply ≈ 4× less energy than fp32 |
+| **Arduino Nano (chúng ta)** | Chu kỳ nhân số thực float giả lập bằng phần mềm | Khả năng tính toán là ràng buộc chính |
+| **Điện thoại chạy Llama-3** | Bộ nhớ RAM (trọng số nhỏ hơn 4 lần) + hiệu năng Neural Engine | Một mô hình 70B fp32 = 280 GB. Không thể chạy được nếu không lượng tử hóa. |
+| **Đám mây phục vụ lớp GPT** | Băng thông bộ nhớ (lượt lấy dữ liệu HBM), chi phí $$/token | int4/int8 → tạo ra nhiều token hơn từ 4–8 lần trên mỗi giờ chạy GPU |
+| **Thiết bị biên (flycam, chuông cửa, đồng hồ)** | Tuổi thọ pin | Phép nhân int8 sử dụng năng lượng ít hơn khoảng ~4 lần so với fp32 |
 
-Our rig is the rare case where the benefit shows up most directly —
-but the same recipe (QAT, per-channel scales, weight absorption) is
-what runs Llama-3 on a phone, just at a much larger scale.
+Thiết bị của chúng ta là trường hợp hiếm hoi mà lợi ích thể hiện trực tiếp nhất — nhưng cùng một công thức (QAT, thang đo từng kênh, hấp thụ trọng số) chính là những gì đang chạy Llama-3 trên điện thoại, chỉ là ở một quy mô lớn hơn nhiều.

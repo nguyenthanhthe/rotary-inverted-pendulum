@@ -1,180 +1,104 @@
-# Async Control Architecture
+# Kiến trúc điều khiển bất đồng bộ (Async Control Architecture)
 
-How `finetune_async.py` keeps the rig's control loop at strict 100 Hz
-(or any configured rate) while SAC's gradient updates run in parallel.
-This is a runtime-systems doc — it has no opinions about RL semantics
-(see [`rl_transitions.md`](rl_transitions.md) for those) or how to
-*choose* a control rate (see [`control_rate_selection.md`](control_rate_selection.md)
-for that). It only explains how we *enforce* whatever rate was chosen.
+Tài liệu này giải thích cách `finetune_async.py` giữ vòng lặp điều khiển của thiết bị (rig) ở tần số nghiêm ngặt 100 Hz (hoặc bất kỳ tần số cấu hình nào) trong khi các cập nhật gradient của SAC chạy song song. Đây là tài liệu về hệ thống runtime — nó không bàn về ngữ nghĩa RL (xem [`rl_transitions.md`](rl_transitions.md)) hay cách *chọn* tần số điều khiển (xem [`control_rate_selection.md`](control_rate_selection.md)). Nó chỉ giải thích cách chúng tôi *áp đặt* tần số đã chọn đó.
 
-## The bug this exists to prevent
+## Lỗi (bug) mà kiến trúc này ngăn chặn
 
-During Phase 4 fine-tuning we discovered that SB3's `SAC.learn()` runs
-`collect_rollouts` (which calls `env.step()`) and `train()` (gradient
-updates) sequentially in **one thread**. With `--gradient-steps 4`,
-gradient updates take ~20 ms per env step. The env's pacing logic
-(`time.sleep(next_tick - monotonic())`) silently dropped the configured
-100 Hz to ~35 Hz actual. The policy *learned 35 Hz dynamics*. Deployment
-at 100 Hz produced motor chatter and step-skipping — same weights,
-totally different observed behavior.
+Trong quá trình tinh chỉnh (fine-tuning) ở Giai đoạn 4, chúng tôi phát hiện ra rằng hàm `SAC.learn()` của thư viện SB3 chạy tuần tự hai hàm `collect_rollouts` (gọi `env.step()`) và `train()` (cập nhật gradient) trong **một thread duy nhất**. Với tham số `--gradient-steps 4`, các cập nhật gradient mất khoảng ~20 ms cho mỗi bước môi trường (env step). Logic điều phối nhịp độ của env (`time.sleep(next_tick - time.monotonic())`) đã âm thầm kéo tần số cấu hình từ 100 Hz xuống chỉ còn ~35 Hz thực tế. Chính sách đã học theo *động lực học ở tần số 35 Hz*. Khi triển khai thực tế ở tần số 100 Hz, động cơ bị rung giật (chatter) và trượt bước (step-skipping) — cùng một bộ trọng số (weights) nhưng hành vi thực tế quan sát được hoàn toàn khác nhau.
 
-`finetune_async.py` is the architectural fix: a custom training loop
-(replacing `model.learn()`) that owns two cooperating threads.
+`finetune_async.py` là giải pháp sửa đổi kiến trúc: một vòng lặp huấn luyện tùy chỉnh (thay thế cho `model.learn()`) quản lý hai thread hợp tác với nhau.
 
-## Two threads
+## Hai thread
 
 ```
 ┌──────────────────────────────────────────┐    ┌──────────────────────────────────┐
 │ Control thread (background, strict 100Hz)│    │ Learner thread (main, best effort)│
 │                                          │    │                                  │
-│ every 10 ms:                             │    │ loop:                            │
+│ mỗi 10 ms:                               │    │ vòng lặp:                        │
 │   action ← snapshot.predict(obs)         │    │   transitions ← queue.drain()    │
 │   env.apply_action(action)               │    │   for t: replay_buffer.add(t)    │
-│   sleep_busywait_until_next_tick()       │ →→ │   if past warmup:                │
+│   sleep_busywait_until_next_tick()       │ →→ │   nếu qua giai đoạn warmup:      │
 │   next_obs ← env.observe_and_step(...)   │    │     model.train(K, batch_size)   │
 │   queue.put(transition)                  │    │     snapshot.refresh_from(actor) │
 │                                          │    │                                  │
 └──────────────────────────────────────────┘    └──────────────────────────────────┘
             │                                                 │
             ↓                                                 ↓
-        TransitionQueue (deque + lock) — producer/consumer between threads
-                                                              │
-                                                              ↓
-                                              model.replay_buffer (SB3 ReplayBuffer)
+        TransitionQueue (deque + lock) — nhà sản xuất/tiêu thụ giữa các thread
+                                                               │
+                                                               ↓
+                                               model.replay_buffer (SB3 ReplayBuffer)
 ```
 
-The control thread **never blocks on the learner**. The learner **never
-blocks on the rig**. They communicate through one shared queue and one
-shared replay buffer, both lock-protected.
+Control thread (luồng điều khiển) **không bao giờ bị chặn (block) bởi learner**. Learner (luồng huấn luyện) **không bao giờ bị chặn bởi thiết bị**. Chúng giao tiếp thông qua một queue chung và một replay buffer chung, cả hai đều được bảo vệ bằng khóa (lock).
 
-## Three locks
+## Ba khóa (locks)
 
-1. **`LowLevelClient._lock`** (per-serial-transaction). Prevents
-   interleaved bytes when the control thread is mid-`get_state` and
-   the main thread fires `disengage_motor` for safety.
+1. **`LowLevelClient._lock`** (cho mỗi phiên giao dịch serial). Ngăn chặn các byte dữ liệu bị xen lẫn khi control thread đang ở giữa quá trình gọi `get_state` và main thread (luồng chính) kích hoạt `disengage_motor` vì lý do an toàn.
 
-2. **`replay_buffer_lock`** (orchestrator-owned). Held during
-   `replay_buffer.add()` *and* during the entire `model.train(K, batch)`
-   call. SAC's `train()` calls `sample()` K times internally; we want a
-   frozen view across those calls. In practice contention is zero —
-   both contenders are on the main thread; the lock exists for
-   future-proofing and audit trail.
+2. **`replay_buffer_lock`** (do bộ điều phối sở hữu). Được giữ trong quá trình gọi `replay_buffer.add()` *và* trong suốt cuộc gọi `model.train(K, batch)`. Hàm `train()` của SAC gọi `sample()` K lần bên trong; chúng ta muốn có một chế độ xem tĩnh (frozen view) của buffer qua các cuộc gọi đó. Trên thực tế, sự tranh chấp (contention) bằng không — cả hai bên tranh chấp đều nằm trên main thread; khóa này tồn tại để dự phòng cho tương lai và phục vụ việc kiểm tra vết (audit trail).
 
-3. **`PolicySnapshot._lock`**. Guards `self._net.load_state_dict(...)`
-   (called by the learner after `train()`) versus `self._net(obs)`
-   (called by the control thread). **Required**: PyTorch's
-   `optimizer.step()` mutates parameter `.data` in place, and a forward
-   pass concurrent with that write would yield a corrupted action. The
-   snapshot is a deepcopy of `model.actor`; the learner's working actor
-   is untouched by the control thread.
+3. **`PolicySnapshot._lock`**. Bảo vệ `self._net.load_state_dict(...)` (được gọi bởi learner sau hàm `train()`) khỏi việc tranh chấp với `self._net(obs)` (được gọi bởi control thread). **Bắt buộc**: Hàm `optimizer.step()` của PyTorch thay đổi tham số `.data` trực tiếp (in place), và một lượt lan truyền xuôi (forward pass) chạy đồng thời với ghi đè dữ liệu đó sẽ tạo ra một hành động bị lỗi. Snapshot (ảnh chụp nhanh) là một bản copy sâu (deepcopy) của `model.actor`; đối tượng actor làm việc của learner không bị ảnh hưởng bởi control thread.
 
-## Why a snapshot, not the live actor?
+## Tại sao lại dùng snapshot thay vì actor trực tiếp?
 
-If the control thread called `model.actor(obs)` directly, every
-inference would race with whichever step of `optimizer.step()` happened
-to be running on the learner. Reading partially-updated parameters
-gives a corrupted action — fine in a benchmark, dangerous when it
-drives a motor. The snapshot adds a one-`state_dict`-copy cost per
-train cycle (microseconds) and gives consistent reads.
+Nếu control thread gọi trực tiếp `model.actor(obs)`, mỗi lượt suy luận (inference) sẽ tranh chấp với bất kỳ bước nào của `optimizer.step()` đang chạy trên learner. Đọc các tham số được cập nhật một phần sẽ tạo ra hành động bị lỗi — điều này có thể chấp nhận được trong một thử nghiệm benchmark, nhưng rất nguy hiểm khi điều khiển động cơ thực tế. Snapshot thêm một chi phí sao chép `state_dict` cho mỗi chu kỳ huấn luyện (mất vài micro giây) nhưng mang lại kết quả đọc nhất quán.
 
-## Pacing — the busy-wait detail
+## Điều phối nhịp độ — chi tiết về busy-wait
 
-macOS `time.sleep` typically overshoots by 1-2 ms (no `SCHED_FIFO`).
-A naive sleep-the-full-remainder pattern yields a mean rate of ~83 Hz
-when you ask for 100 Hz. The fix is two-stage:
+Hàm `time.sleep` trên macOS thường vượt quá mục tiêu khoảng 1-2 ms (do không có `SCHED_FIFO`). Cách ngủ toàn bộ thời gian còn lại (naive sleep-the-full-remainder) sẽ tạo ra tần số trung bình khoảng ~83 Hz khi bạn yêu cầu 100 Hz. Cách khắc phục gồm hai giai đoạn:
 
 ```python
 sleep_for = next_tick - time.monotonic()
 if sleep_for > 0.001:
     time.sleep(sleep_for - 0.001)
 while time.monotonic() < next_tick:
-    pass    # busy-wait the last ≤ 1 ms
+    pass    # chờ bận (busy-wait) trong ≤ 1 ms cuối cùng
 ```
 
-Adds <1% CPU at 100 Hz, pulls jitter from ~2 ms down to <0.1 ms.
-Standalone V1/V2 tests measure mean dt = 10.000 ms, std < 1 ms.
+Cách này chỉ tăng thêm <1% CPU ở tần số 100 Hz, giảm độ rung giật thời gian (jitter) từ ~2 ms xuống dưới <0.1 ms. Các thử nghiệm độc lập V1/V2 đo được thời gian trung bình dt = 10.000 ms, độ lệch chuẩn std < 1 ms.
 
-## Watchdog: the 3-strike timing rule
+## Watchdog: quy tắc thời gian 3 lần vi phạm (3-strike)
 
-Inside the tick loop, if the control thread overruns its deadline
-by more than `timing_violation_threshold_ms` (default 5 ms) for **3
-consecutive** ticks, `AsyncControlLoop` disengages the motor and
-raises `TimingViolation`. Three-strike tolerance because macOS
-schedulers occasionally hiccup once and recover; three-in-a-row is
-structural (probably the learner thread is holding the GIL too long).
+Bên trong vòng lặp tick, nếu control thread vượt quá thời hạn (deadline) của nó một khoảng lớn hơn `timing_violation_threshold_ms` (mặc định là 5 ms) trong **3 tick liên tiếp**, `AsyncControlLoop` sẽ ngắt kích hoạt động cơ và kích hoạt lỗi `TimingViolation`. Sự khoan dung 3 lần vi phạm này là do bộ điều phối của macOS thỉnh thoảng bị nấc một lần rồi tự phục hồi; vi phạm 3 lần liên tiếp là do lỗi cấu trúc (có thể luồng learner đang giữ khóa GIL quá lâu).
 
-This is how future users learn about the bug *quickly* if they
-misconfigure things — no more silent rate drops.
+Đây là cách người dùng có thể phát hiện lỗi *nhanh chóng* nếu cấu hình sai — không còn hiện tượng giảm tần số âm thầm nữa.
 
-When raising, the loop also calls `queue.discard_recent(max_strikes - 1)`
-so transitions queued during the violating ticks (with stretched dt)
-don't pollute the replay buffer.
+Khi kích hoạt lỗi, vòng lặp cũng gọi `queue.discard_recent(max_strikes - 1)` để các chuyển đổi (transitions) được đưa vào queue trong các tick vi phạm (với dt bị kéo giãn) không làm ô nhiễm replay buffer.
 
-## Signal handling
+## Xử lý tín hiệu (Signal handling)
 
-Python only delivers signals to the main thread. The orchestrator
-installs `SIGINT`/`SIGTERM` handlers that:
+Python chỉ gửi các tín hiệu (signals) đến luồng chính (main thread). Bộ điều phối cài đặt các bộ xử lý `SIGINT`/`SIGTERM` để:
 
-1. Set the shared `stop_flag` (which the control thread polls at the
-   top of every tick → exits cleanly).
-2. Call `env.disengage_safely()` (which uses `LowLevelClient._lock`
-   to safely write the disengage byte even if the control thread is
-   mid-read).
+1. Đặt cờ chia sẻ `stop_flag` (luồng control thread sẽ kiểm tra cờ này ở đầu mỗi tick → thoát một cách sạch sẽ).
+2. Gọi `env.disengage_safely()` (sử dụng `LowLevelClient._lock` để ghi byte disengage một cách an toàn ngay cả khi control thread đang ở giữa lượt đọc).
 
-The synchronous `RealRotaryInvertedPendulumEnv.__init__` no longer
-auto-registers signal handlers — that was load-bearing for the old
-sync flow but conflicts with multi-threaded ownership. Direct callers
-who want the old behavior can wire `signal.signal(SIGINT, env._on_signal)`
-themselves.
+Hàm đồng bộ `RealRotaryInvertedPendulumEnv.__init__` không còn tự động đăng ký các bộ xử lý tín hiệu nữa — điều đó từng rất quan trọng đối với luồng đồng bộ cũ nhưng lại xung đột với kiến trúc đa luồng mới. Các bộ gọi trực tiếp muốn hành vi cũ có thể tự liên kết bằng `signal.signal(SIGINT, env._on_signal)`.
 
-## Replay buffer persistence
+## Lưu trữ replay buffer (Replay buffer persistence)
 
-`finetune_async.py` saves `runs/<run-name>/replay_buffer.pkl` (~6 MB
-per 30 k transitions, pickle) at session end and at every checkpoint.
-The `--resume-buffer <path>` flag lets a future session load it via
-`model.load_replay_buffer`. This means real-robot transitions
-**accumulate across sessions** instead of being discarded each time —
-critical because real-robot data is ~1000× more expensive to collect
-than sim data.
+`finetune_async.py` lưu tệp `runs/<run-name>/replay_buffer.pkl` (~6 MB cho mỗi 30 nghìn transitions, định dạng pickle) khi kết thúc phiên làm việc và tại mỗi điểm lưu (checkpoint). Cờ `--resume-buffer <path>` cho phép các phiên làm việc tiếp theo tải lại nó thông qua `model.load_replay_buffer`. Điều này có nghĩa là các dữ liệu chuyển trạng thái trên robot thực **được tích lũy qua các phiên làm việc** thay vì bị bỏ đi mỗi lần — điều này rất quan trọng vì dữ liệu robot thực tế đắt hơn khoảng ~1000 lần so với dữ liệu mô phỏng.
 
-Important: do **not** load buffers from synchronous fine-tunes
-(legacy `finetune_real.py`). Those transitions describe `(s, a, s')`
-at variable 28-30 ms intervals (see "the rate-mismatch bug" above).
-Mixing them with the new strict-rate transitions teaches the critic
-contradictory mappings. Same caveat for buffers from a different
-control rate — always resume against the same rate the buffer was
-collected at.
+Quan trọng: **không** tải các buffer từ các phiên tinh chỉnh đồng bộ cũ (tệp cũ `finetune_real.py`). Những chuyển đổi đó mô tả `(s, a, s')` ở các khoảng thời gian biến đổi từ 28-30 ms (xem "lỗi không khớp tần số" ở trên). Việc trộn chúng với các chuyển đổi tần số nghiêm ngặt mới sẽ dạy cho critic các ánh xạ mâu thuẫn. Cảnh báo tương tự đối với các buffer từ một tần số điều khiển khác — luôn tiếp tục (resume) với cùng tần số điều khiển mà buffer đó được thu thập.
 
-## Verification protocol
+## Giao thức xác thực (Verification protocol)
 
-Implemented and run in this order — each step proves a property in
-isolation before composing:
+Được triển khai và chạy theo thứ tự này — mỗi bước chứng minh một đặc tính riêng biệt trước khi kết hợp:
 
-- **V1**: control loop alone with no-op learner → mean dt = 10.000 ms,
-  std < 1 ms. Proves the control thread alone holds 100 Hz on macOS.
-- **V2**: control loop with synthetic CPU-hog learner → identical
-  timing. Proves the learner doesn't perturb the control thread via
-  the GIL.
-- **V3** (rig required): real `model.train(K=4)` with a pre-loaded
-  buffer → identical timing. Proves PyTorch + numpy + optimizer step
-  doesn't starve the control thread.
-- **V4** (rig required): short end-to-end fine-tune (10 episodes × 6 s,
-  K=4) — orchestrator-reported mean tick rate within ±2 Hz of target,
-  zero violations, redeployed policy doesn't chatter at the same rate.
-- **V5** (rig required): full re-baseline — fresh sim curriculum at
-  the chosen design rate, then a clean fine-tune. Final policy must
-  show sustained balance windows ≥ 5 s in deployment runs.
+- **V1**: chỉ chạy vòng lặp điều khiển với learner giả lập không làm gì (no-op) → thời gian trung bình dt = 10.000 ms, độ lệch chuẩn std < 1 ms. Chứng minh rằng riêng luồng control thread có thể giữ tần số 100 Hz trên macOS.
+- **V2**: vòng lặp điều khiển với learner giả lập chiếm dụng CPU (synthetic CPU-hog) → thời gian giống hệt nhau. Chứng minh rằng learner không làm xáo trộn luồng control thread thông qua khóa GIL.
+- **V3** (yêu cầu thiết bị thực): chạy `model.train(K=4)` thực tế với một buffer được tải sẵn → thời gian giống hệt nhau. Chứng minh rằng bước cập nhật PyTorch + numpy + optimizer không làm luồng control thread bị thiếu tài nguyên.
+- **V4** (yêu cầu thiết bị thực): tinh chỉnh từ đầu đến cuối ngắn (10 tập × 6 giây, K=4) — tần số tick trung bình do bộ điều phối báo cáo nằm trong khoảng ±2 Hz so với mục tiêu, không có vi phạm nào, chính sách được triển khai lại không bị rung giật ở cùng một tần số.
+- **V5** (yêu cầu thiết bị thực): thiết lập lại toàn bộ baseline — chương trình học mô phỏng mới (fresh sim curriculum) ở tần số thiết kế đã chọn, sau đó tinh chỉnh sạch. Chính sách cuối cùng phải duy trì thời gian cân bằng ≥ 5 giây trong các lượt chạy thực tế.
 
-Per-episode telemetry is logged to `runs/<run-name>/timing.csv`:
-`mean_tick_dt_ms`, `std_tick_dt_ms`, `max_overrun_ms`, `n_violations`,
-`learner_train_calls`, `learner_total_train_s`. This is the artifact
-that proves we don't regress in future PRs.
+Dữ liệu đo đạc (telemetry) của từng tập được ghi vào `runs/<run-name>/timing.csv`:
+`mean_tick_dt_ms`, `std_tick_dt_ms`, `max_overrun_ms`, `n_violations`, `learner_train_calls`, `learner_total_train_s`. Đây là sản phẩm chứng minh chúng ta không bị giảm hiệu năng trong các bản PR sau này.
 
-## Where it lives in code
+## Vị trí trong mã nguồn
 
-| File | What it does |
+| Tệp | Chức năng |
 |---|---|
-| `async_control.py` | `TransitionQueue`, `PolicySnapshot`, `AsyncControlLoop`. Pure runtime primitives — no SB3 references except for accepting an `nn.Module` to snapshot. |
-| `finetune_async.py` | The orchestrator: loads SAC, manages threads + locks, handles signals, persists buffer + policy. |
-| `lowlevel_client.py` | `_lock` added so concurrent `get_state` / `disengage_motor` calls don't interleave bytes. |
-| `real_env.py` | `apply_action` and `observe_and_step` split out of the synchronous `step` so the async loop can interleave them with externally-paced sleeps. |
+| `async_control.py` | Chứa `TransitionQueue`, `PolicySnapshot`, `AsyncControlLoop`. Các nguyên mẫu runtime thuần túy — không có tham chiếu SB3 ngoại trừ việc chấp nhận một `nn.Module` để tạo snapshot. |
+| `finetune_async.py` | Bộ điều phối (orchestrator): tải SAC, quản lý các thread + lock, xử lý tín hiệu, lưu trữ buffer + policy. |
+| `lowlevel_client.py` | Thêm `_lock` để các cuộc gọi đồng thời `get_state` / `disengage_motor` không bị xen lẫn các byte dữ liệu. |
+| `real_env.py` | Tách `apply_action` và `observe_and_step` ra khỏi hàm đồng bộ `step` để vòng lặp bất đồng bộ có thể xen kẽ chúng với các khoảng ngủ được điều phối nhịp độ bên ngoài. |

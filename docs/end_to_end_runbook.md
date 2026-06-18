@@ -1,83 +1,61 @@
-# End-to-End Runbook
+# Hướng dẫn chạy từ đầu đến cuối (End-to-End Runbook)
 
-How to take a freshly-built rig from "no policy at all" to "balances
-standalone on the Nano, no laptop tether". Each step lists the command,
-the expected wall-clock cost, and what the next step depends on.
+Cách đưa một thiết bị mới chế tạo từ trạng thái "chưa có chính sách (policy) nào" đến "tự cân bằng độc lập trên Nano, không cần kết nối máy tính". Mỗi bước liệt kê lệnh thực hiện, thời gian ước tính và điều kiện cần cho bước tiếp theo.
 
-For *why* the pipeline is shaped this way, see [`../RL_PLAN.md`](../RL_PLAN.md).
-For *how a single transition works*, see [`rl_transitions.md`](rl_transitions.md).
+Để hiểu rõ *tại sao* pipeline được thiết kế theo cách này, xem [`../RL_PLAN.md`](../RL_PLAN.md). Để biết *cách hoạt động của một bước chuyển đổi (transition)*, xem [`rl_transitions.md`](rl_transitions.md).
 
 ```
-   ┌──────────┐    ┌──────────┐    ┌──────────────┐    ┌──────────────┐
-   │ 0 sysid  │───▶│ 1 sim    │───▶│ 2 fine-tune  │───▶│ 3 test       │
-   │  recordings    curriculum     real-rig async      teacher tethered
-   └──────────┘    └──────────┘    └──────────────┘    └──────┬───────┘
-                                                              │ scored ≥ 0.9?
-                                                              ▼
-                                  ┌──────────────────────┐    ┌──────────┐
-                                  │ 6 flash + verify     │◀───│ 4 distill│
-                                  │ on-device standalone │    │ student  │
-                                  └──────────────────────┘    └────┬─────┘
-                                                                   │
-                                                              ┌────▼──────┐
-                                                              │ 5 test    │
-                                                              │ student   │
-                                                              │ tethered  │
-                                                              └───────────┘
+    ┌──────────┐    ┌──────────┐    ┌──────────────┐    ┌──────────────┐
+    │ 0 sysid  │───▶│ 1 sim    │───▶│ 2 fine-tune  │───▶│ 3 test       │
+    │  recordings    curriculum     real-rig async      teacher tethered
+    └──────────┘    └──────────┘    └──────────────┘    └──────┬───────┘
+                                                               │ điểm số ≥ 0.9?
+                                                               ▼
+                                    ┌──────────────────────┐    ┌──────────┐
+                                    │ 6 flash + verify     │◀───│ 4 distill│
+                                    │ trên board độc lập   │    │ student  │
+                                    └──────────────────────┘    └────┬─────┘
+                                                                     │
+                                                                ┌────▼──────┐
+                                                                │ 5 test    │
+                                                                │ student   │
+                                                                │ tethered  │
+                                                                └───────────┘
 ```
 
-If you only need the upright/balance behaviour and are happy keeping the
-laptop attached: stop after step 3. Steps 4–6 only exist to remove the
-tether.
+Nếu bạn chỉ cần hành vi dựng thẳng/cân bằng và chấp nhận kết nối máy tính trong khi chạy: hãy dừng lại sau bước 3. Các bước 4–6 chỉ tồn tại để loại bỏ dây kết nối máy tính (tether).
 
-## Prerequisites
+## Yêu cầu trước
 
-- macOS / Linux dev box with `arduino-cli`, the `arduino:avr` core, and
-  the `AS5600` (RobTillaart) + `FastAccelStepper` libraries installed.
-- Python env per [`../RotaryInvertedPendulum-python/README.md`](../RotaryInvertedPendulum-python/README.md):
+- Máy tính phát triển chạy macOS / Linux có cài đặt `arduino-cli`, core `arduino:avr`, và các thư viện `AS5600` (RobTillaart) + `FastAccelStepper`.
+- Môi trường Python được thiết lập theo [`../RotaryInvertedPendulum-python/README.md`](../RotaryInvertedPendulum-python/README.md):
   `mamba activate rotary-inverted-pendulum`.
-- Rig wired with **STEP on pin 9**, DIR on pin 2, ENABLE on pin 5, AS5600
-  on I²C (A4/A5). Pin 9 is required by FastAccelStepper on ATmega328 and
-  works for AccelStepper too — see
-  [`../NEXT_STEPS.md`](../NEXT_STEPS.md).
+- Thiết bị được đấu dây với **chân STEP nối với pin 9**, chân DIR nối với pin 2, chân ENABLE nối với pin 5, cảm biến AS5600 nối với I²C (A4/A5). Chân pin 9 là bắt buộc đối với thư viện FastAccelStepper trên vi điều khiển ATmega328 và cũng hoạt động tốt với thư viện AccelStepper — xem tệp [`../NEXT_STEPS.md`](../NEXT_STEPS.md).
 
-In the commands below, replace `/dev/cu.usbserial-1130` with whatever
-port `arduino-cli board list` shows for your Nano.
+Trong các lệnh dưới đây, hãy thay thế `/dev/cu.usbserial-1130` bằng cổng phù hợp mà lệnh `arduino-cli board list` hiển thị cho board Nano của bạn.
 
-## 0. System identification — measure the rig
+## 0. Nhận dạng hệ thống (System identification) — Đo đạc thiết bị
 
-Pinning the dynamics parameters once. Outputs `sysid_params.json`,
-which `pendulum_env.py` reads to build the sim.
+Xác định cố định các tham số động lực học. Đầu ra là tệp `sysid_params.json`, được đọc bởi `pendulum_env.py` để xây dựng môi trường mô phỏng.
 
-Full protocol: [`sysid_runbook.md`](sysid_runbook.md). Re-run any time
-the rig changes mechanically (new bearings, rebuilt arm, changed
-microstepping, swapped motor).
+Quy trình chi tiết: [`sysid_runbook.md`](sysid_runbook.md). Hãy chạy lại quy trình này bất cứ khi nào thiết bị có thay đổi về cơ khí (thay vòng bi mới, lắp lại cánh tay, thay đổi chế độ vi bước, thay động cơ).
 
-## 1. Train the teacher in sim — curriculum
+## 1. Huấn luyện chính sách giáo viên (teacher) trong mô phỏng — Chương trình học (Curriculum)
 
-The repo's canonical recipe trains a SAC actor through three DR stages
-of increasing realism. End-to-end ~25 min on the MacBook (CPU, single
-env). Outputs `runs/<run-name>/last.zip`.
+Quy trình chuẩn của dự án huấn luyện một SAC actor qua 3 giai đoạn DR với mức độ thực tế tăng dần. Thời gian thực hiện mất khoảng ~25 phút trên MacBook (chạy bằng CPU, một env duy nhất). Đầu ra là tệp `runs/<run-name>/last.zip`.
 
 ```bash
 cd RotaryInvertedPendulum-python/src/rl
 bash curriculum_train.sh
 ```
 
-`curriculum_train.sh` reads `sysid_params.json`, derives DR ranges from
-physical-time-units, runs three stages, and writes the final policy
-plus checkpoints. The `control_freq_hz` is **35 Hz** by default in
-every component — see [`control_rate_selection.md`](control_rate_selection.md)
-for why.
+Tập lệnh `curriculum_train.sh` đọc tệp `sysid_params.json`, tính toán các phạm vi DR từ các đơn vị thời gian vật lý, chạy qua 3 giai đoạn huấn luyện và ghi lại chính sách cuối cùng cùng với các điểm lưu (checkpoints). Tần số điều khiển `control_freq_hz` mặc định là **35 Hz** ở mọi thành phần — xem [`control_rate_selection.md`](control_rate_selection.md) để biết lý do.
 
-## 2. Fine-tune on the real rig — async
+## 2. Tinh chỉnh trên thiết bị thực — Bất đồng bộ (Async)
 
-The sim policy will not balance on hardware on its first try
-(sim-to-real gap). Async fine-tuning closes that gap with ~30–80
-real-rig episodes (~10–25 min wall clock).
+Chính sách huấn luyện trong mô phỏng sẽ chưa thể cân bằng ngay lập tức trên phần cứng thực tế (do khoảng cách giữa mô phỏng và thực tế - sim-to-real gap). Quá trình tinh chỉnh bất đồng bộ (async fine-tuning) sẽ thu hẹp khoảng cách đó sau khoảng ~30–80 tập huấn luyện thực tế (mất khoảng ~10–25 phút thời gian thực).
 
-Flash the LowLevelServer first so the laptop can drive the rig over the
-binary protocol:
+Đầu tiên, nạp chương trình LowLevelServer để máy tính có thể điều khiển thiết bị qua giao thức nhị phân:
 
 ```bash
 arduino-cli compile --upload -p /dev/cu.usbserial-1130 \
@@ -85,21 +63,19 @@ arduino-cli compile --upload -p /dev/cu.usbserial-1130 \
     RotaryInvertedPendulum-arduino/LowLevelServer
 ```
 
-Then run the async orchestrator. `--resume-buffer` is optional on the
-first session; on subsequent sessions, point it at the previous run's
-`replay_buffer.pkl` to keep accumulated real-rig transitions:
+Sau đó, chạy bộ điều phối bất đồng bộ. Tùy chọn `--resume-buffer` không bắt buộc trong phiên chạy đầu tiên; ở các phiên chạy tiếp theo, hãy trỏ nó tới tệp `replay_buffer.pkl` của phiên chạy trước để tiếp tục tích lũy dữ liệu chuyển trạng thái thực tế:
 
 ```bash
 cd RotaryInvertedPendulum-python/src/rl
 
-# First fine-tune session
+# Phiên tinh chỉnh đầu tiên
 python finetune_async.py \
     --policy runs/<sim-run>/last.zip \
     --port /dev/cu.usbserial-1130 \
     --episodes 50 \
     --run-name async_v1
 
-# Subsequent sessions, buffer-resumed
+# Các phiên tiếp theo, tiếp tục từ buffer cũ
 python finetune_async.py \
     --policy runs/async_v1/last.zip \
     --resume-buffer runs/async_v1/replay_buffer.pkl \
@@ -108,18 +84,13 @@ python finetune_async.py \
     --run-name async_v1_extend
 ```
 
-Architecture detail: [`async_control_architecture.md`](async_control_architecture.md).
+Chi tiết kiến trúc: [`async_control_architecture.md`](async_control_architecture.md).
 
-The orchestrator disengages the motor for `--reset-settle-s` (default 5)
-between episodes so the pendulum coasts to rest passively. **Listen** to
-the motor during the first few episodes — a smooth whirr is fine, a
-buzzy/grinding sound means step-skipping (drop `MOTOR_ACCELERATION` in
-`LowLevelServer.ino` and `RLControl.ino` from 50 k → 30 k and re-flash).
+Bộ điều phối sẽ tắt kích hoạt động cơ trong khoảng thời gian `--reset-settle-s` (mặc định là 5) giữa các tập để con lắc dừng lại một cách thụ động. **Hãy lắng nghe** tiếng động cơ trong vài tập đầu tiên — tiếng vo vo mượt mà là bình thường, nếu có tiếng rè rè/kẹt kẹt nghĩa là bị mất bước (hãy giảm `MOTOR_ACCELERATION` trong `LowLevelServer.ino` và `RLControl.ino` từ 50 k xuống 30 k và nạp lại chương trình).
 
-## 3. Test the teacher on the rig — tethered
+## 3. Kiểm tra chính sách giáo viên (teacher) trên thiết bị — Có kết nối máy tính (Tethered)
 
-Confirms the fine-tuned teacher actually balances before spending more
-time on it. Cheap (30 seconds of rig time).
+Xác nhận xem giáo viên đã tinh chỉnh có thực sự cân bằng được hay không trước khi dành thêm thời gian cho nó. Bước này rất nhanh (chỉ mất 30 giây chạy thiết bị).
 
 ```bash
 python run_policy.py \
@@ -128,24 +99,16 @@ python run_policy.py \
     --duration-s 30
 ```
 
-Watch the printed `upright` proxy at the end:
-- **mean ≥ 0.9** → solid teacher, proceed to step 4 to remove the tether.
-- **mean 0.85–0.9** → acceptable; can proceed but a few more fine-tune
-  episodes (back to step 2 with `--resume-buffer`) usually buys
-  robustness.
-- **mean < 0.85** → fine-tuning didn't converge. Diagnose before
-  distilling: check the
-  [policy improvement ideas](policy_improvement_ideas.md) backlog,
-  consider re-sysid, consider a wider `--gradient-steps`.
+Quan sát giá trị đại diện cho trạng thái thẳng đứng (`upright` proxy) được in ra ở cuối lượt chạy:
+- **Trung bình (mean) ≥ 0.9** → giáo viên hoạt động tốt, tiến hành bước 4 để bỏ kết nối máy tính.
+- **Trung bình 0.85–0.9** → chấp nhận được; có thể tiếp tục nhưng chạy thêm vài tập tinh chỉnh nữa (quay lại bước 2 với `--resume-buffer`) thường sẽ giúp tăng khả năng chống chịu nhiễu.
+- **Trung bình < 0.85** → quá trình tinh chỉnh không hội tụ. Cần chẩn đoán lỗi trước khi chưng cất: kiểm tra các ý tưởng cải tiến chính sách [policy improvement ideas](policy_improvement_ideas.md), xem xét chạy lại sysid, hoặc cân nhắc tăng tham số `--gradient-steps`.
 
-If you're happy keeping the laptop attached, **you can stop here**.
-The teacher runs at 35 Hz over USB serial just fine.
+Nếu bạn chấp nhận giữ kết nối với máy tính, **bạn có thể dừng lại ở đây**. Chính sách giáo viên chạy ở tần số 35 Hz qua kết nối serial USB rất tốt.
 
-## 4. Distill — shrink the actor for the Nano
+## 4. Chưng cất (Distill) — Thu nhỏ actor cho Nano
 
-The fine-tuned SAC actor is 67 K parameters (≈ 270 KB float32) — far
-too big for the Nano's 32 KB flash. Distill into a 5→32→32→1 student
-(≈ 5 KB). Cheap (~1 minute):
+Chính sách giáo viên SAC sau tinh chỉnh có kích thước 67 nghìn tham số (≈ 270 KB số thực float32) — quá lớn đối với bộ nhớ flash 32 KB của Nano. Chúng tôi tiến hành chưng cất thành một chính sách học sinh (student) có cấu trúc mạng 5→32→32→1 (kích thước ≈ 5 KB). Bước này mất khoảng ~1 phút:
 
 ```bash
 python distill.py \
@@ -154,25 +117,18 @@ python distill.py \
     --out-dir runs/async_v1_extend/distill_h32_aug
 ```
 
-`distill.py`:
-1. Loads teacher + replay buffer (real-rig observations).
-2. Re-evaluates the deterministic-mean teacher action on each obs.
-3. Augments with 100 K teacher rollouts in the DR sim (helps when
-   the real-rig buffer is small/sparse).
-4. Trains a tiny MLP via supervised regression with a tanh head.
-5. Sanity-checks numpy parity with PyTorch (catches export bugs).
+Kịch bản `distill.py` sẽ:
+1. Tải mô hình giáo viên + replay buffer (các quan sát thực tế từ thiết bị).
+2. Đánh giá lại hành động xác định (deterministic-mean) của giáo viên trên mỗi quan sát.
+3. Tăng cường dữ liệu bằng 100 nghìn lượt chạy của giáo viên trong môi trường mô phỏng DR (giúp ích khi buffer thực tế còn nhỏ/thưa thớt).
+4. Huấn luyện một mạng MLP nhỏ thông qua hồi quy có giám sát (supervised regression) với đầu ra tanh.
+5. Kiểm tra chéo độ khớp kết quả giữa numpy và PyTorch (để phát hiện lỗi xuất mô hình).
 
-Acceptance for the student: validation MSE ≲ 0.02 in action units, plus
-the tethered rollout in the next step. Closed-loop sim eval was removed
-from `distill.py` because it isn't a meaningful gate for real-rig
-fine-tuned teachers — they routinely fail the sim eval even when they
-balance perfectly on hardware.
+Tiêu chí nghiệm thu cho học sinh: sai số bình phương trung bình (validation MSE) ≲ 0.02 tính theo đơn vị hành động, cộng với lượt chạy thử có kết nối máy tính ở bước tiếp theo. Tính năng đánh giá vòng kín trong mô phỏng đã được gỡ bỏ khỏi `distill.py` vì nó không mang lại nhiều ý nghĩa đối với giáo viên đã tinh chỉnh trên thiết bị thực — chúng thường không vượt qua bài kiểm tra mô phỏng dù cân bằng rất tốt trên phần cứng thực tế.
 
-## 5. Test the student on the rig — tethered
+## 5. Kiểm tra chính sách học sinh (student) trên thiết bị — Có kết nối máy tính
 
-Confirms the student is a faithful distillation of the teacher *before*
-flashing it onto the Nano. Same `run_policy.py` flow but with the `.pt`
-file. Cheap (30 s of rig time):
+Xác nhận xem học sinh có tái hiện trung thực hành vi của giáo viên hay không *trước khi* nạp trực tiếp lên Nano. Vẫn sử dụng kịch bản `run_policy.py` tương tự nhưng trỏ tới tệp `.pt` của học sinh. Mất khoảng 30 giây chạy thiết bị:
 
 ```bash
 python run_policy.py \
@@ -181,22 +137,19 @@ python run_policy.py \
     --duration-s 30
 ```
 
-Expect the upright proxy to be **within ~0.05** of the teacher's score
-from step 3. Larger gap → covariate-shift problem; either grow the sim
-augmentation (`distill.py --sim-augment-steps 200000`), increase student
-capacity (H=48 still fits comfortably), or accept and move on.
+Yêu cầu điểm số `upright` proxy nằm trong khoảng **chênh lệch ~0.05** so với điểm của giáo viên ở bước 3. Khoảng cách lớn hơn cho thấy vấn đề lệch phân phối (covariate-shift); hãy tăng cường mô phỏng (`distill.py --sim-augment-steps 200000`), tăng dung lượng của học sinh (mức H=48 vẫn vừa vặn bộ nhớ), hoặc chấp nhận kết quả hiện tại.
 
-## 6. Flash the standalone sketch — remove the tether
+## 6. Nạp sketch chạy độc lập — Loại bỏ kết nối máy tính
 
 ```bash
-# Export PROGMEM weights into the Arduino sketch directory
+# Xuất các trọng số PROGMEM vào thư mục sketch của Arduino
 python export_weights.py \
     --student runs/async_v1_extend/distill_h32_aug/student.pt \
     --header  ../../../RotaryInvertedPendulum-arduino/RLControl/policy_weights.h \
     --source-name async_v1_extend/distill_h32_aug
 
-# (Optional but recommended) update the boot self-test reference values
-# in RLControl.ino to match the new student. Compute via:
+# (Tùy chọn nhưng khuyến nghị) cập nhật các giá trị tham chiếu tự kiểm tra (self-test) lúc khởi động
+# trong tệp RLControl.ino để khớp với học sinh mới. Tính toán bằng cách chạy lệnh:
 #   python -c "import torch, numpy as np; from distill import StudentMLP, _student_predict_factory; \
 #       ckpt = torch.load('runs/async_v1_extend/distill_h32_aug/student.pt', \
 #           map_location='cpu', weights_only=True); \
@@ -205,50 +158,32 @@ python export_weights.py \
 #       print('hanging:', float(pred(np.array([0,0,-1,0,0],dtype=np.float32))[0])); \
 #       print('upright:', float(pred(np.array([0,0,1,0,0],dtype=np.float32))[0]))"
 
-# Flash
+# Nạp chương trình
 cd ../../..
 arduino-cli compile --upload -p /dev/cu.usbserial-1130 \
     --fqbn arduino:avr:nano:cpu=atmega328 \
     RotaryInvertedPendulum-arduino/RLControl
 ```
 
-Pin the pendulum hanging straight down at the moment the **3 s startup
-delay** ends (when the LED switches from slow blink to fast blink) —
-that pose becomes the encoder zero for the engagement.
+Hãy giữ con lắc treo thẳng đứng xuống phía dưới tại thời điểm **3 giây trễ lúc khởi động** kết thúc (khi đèn LED chuyển từ nhấp nháy chậm sang nhấp nháy nhanh) — tư thế đó sẽ trở thành điểm 0 của encoder cho quá trình điều khiển.
 
-Verify on serial monitor at 500 kbaud:
-- Boot prints `[boot] policy(hanging) = X.XXXX` and
-  `[boot] policy(upright) = X.XXXX`. These should match the values you
-  computed in the helper one-liner above to ≤ 1e-3 (AVR float vs
-  PyTorch). If they don't, the C++ forward pass / PROGMEM access is
-  broken — re-export, recompile, re-flash.
-- Once engaged: pendulum should swing up and balance within ~3 s, hold
-  ≥ 30 s undisturbed, recover from a flick disturbance.
+Xác nhận trên Serial Monitor ở tốc độ 500 kbaud:
+- Lúc khởi động sẽ in `[boot] policy(hanging) = X.XXXX` và `[boot] policy(upright) = X.XXXX`. Các giá trị này phải khớp với các giá trị bạn đã tính toán ở lệnh phụ trợ phía trên với sai số ≤ 1e-3 (so sánh số thực AVR float và PyTorch). Nếu không khớp, lượt truyền xuôi C++ (forward pass) hoặc việc truy cập bộ nhớ PROGMEM đang bị lỗi — hãy xuất lại trọng số, biên dịch lại và nạp lại.
+- Khi đã bắt đầu điều khiển: con lắc sẽ tự swing-up dựng thẳng và cân bằng trong vòng ~3 giây, giữ yên ≥ 30 giây khi không bị tác động, và có khả năng tự phục hồi khi bị gõ nhẹ gây mất cân bằng.
 
-## Re-running individual steps
+## Chạy lại các bước riêng lẻ
 
-Every step is idempotent and can be re-run on its own:
+Mỗi bước đều có tính không đổi (idempotent) và có thể được chạy độc lập:
 
-| Want to | Re-run | Resume from |
+| Mục tiêu | Chạy lại | Bắt đầu từ |
 |---|---|---|
-| Tweak rewards or DR ranges | step 1 | scratch |
-| Add real-rig data | step 2 | `--resume-buffer` |
-| Try a smaller / larger student | step 4 | existing teacher |
-| Re-flash with the same student | step 6 | existing `.h` |
+| Điều chỉnh phần thưởng hoặc phạm vi DR | bước 1 | ban đầu |
+| Thêm dữ liệu chạy thực tế | bước 2 | `--resume-buffer` |
+| Thử học sinh lớn hơn / nhỏ hơn | bước 4 | giáo viên hiện có |
+| Nạp lại chương trình với cùng học sinh | bước 6 | tệp `.h` hiện có |
 
-## Troubleshooting
+## Khắc phục sự cố
 
-- **Teacher balances tethered but student fails on Nano**: the most
-  likely bug is the encoder zero — captured *at engage time* in
-  `RLControl.ino`, but if the sketch was uploaded with the pendulum in
-  a non-hanging pose and not re-positioned during the 3 s delay, the
-  policy frame is rotated. Reset the Arduino with the pendulum hanging.
-- **Boot self-test prints `[FATAL] FastAccelStepper config rejected`**:
-  the requested `MOTOR_MAX_SPEED` exceeds FastAccelStepper's AVR cap of
-  50 kSteps/s for a single stepper. Check the constant in
-  `RLControl.ino`.
-- **Pendulum swings but never reaches upright**: motor authority is
-  too low. Verify the `MOTOR_ACCELERATION` matches between
-  `LowLevelServer.ino` (used during fine-tuning) and `RLControl.ino`
-  (used at deployment). They must agree, otherwise the policy is
-  trained against one set of dynamics and deployed against another.
+- **Giáo viên cân bằng được khi cắm máy tính nhưng học sinh thất bại trên Nano**: Lỗi dễ xảy ra nhất là căn chỉnh điểm 0 của encoder — giá trị được ghi nhận *tại thời điểm bắt đầu* trong tệp `RLControl.ino`, nhưng nếu sketch được nạp khi con lắc không ở tư thế treo thẳng và không được định vị lại trong 3 giây trễ, hệ tọa độ của chính sách sẽ bị xoay lệch. Hãy reset Arduino khi con lắc đang treo thẳng đứng xuống dưới.
+- **Tự kiểm tra lúc khởi động in `[FATAL] FastAccelStepper config rejected`**: Tốc độ `MOTOR_MAX_SPEED` yêu cầu vượt quá giới hạn tối đa AVR của thư viện FastAccelStepper là 50 kSteps/s cho một động cơ bước duy nhất. Hãy kiểm tra hằng số trong tệp `RLControl.ino`.
+- **Con lắc dao động nhưng không bao giờ dựng thẳng đứng được**: Lực tác động của động cơ quá thấp. Hãy xác nhận xem hằng số `MOTOR_ACCELERATION` có khớp nhau giữa tệp `LowLevelServer.ino` (sử dụng khi tinh chỉnh) và tệp `RLControl.ino` (sử dụng khi triển khai chạy độc lập) hay không. Chúng bắt buộc phải khớp nhau, nếu không chính sách sẽ được huấn luyện trên một tập động lực học này nhưng lại được triển khai trên một tập động lực học khác.

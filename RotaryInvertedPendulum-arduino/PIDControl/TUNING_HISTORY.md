@@ -1,179 +1,181 @@
-# PID Tuning History
+# Nhật ký tinh chỉnh PID (PID Tuning History)
 
-This document tracks the iterative tuning process for the PID balancing controller.
+Tài liệu này theo dõi quá trình tinh chỉnh từng bước (iterative tuning) cho bộ điều khiển cân bằng PID.
 
-## Hardware Setup
-- **Motor:** NEMA17 stepper with DRV8825 driver, 8x microstepping (1600 steps/rev)
-- **Encoder:** AS5600 magnetic encoder (12-bit, 4096 counts/rev)
-- **Controller:** Arduino Nano (ATmega328P, 16MHz)
-- **Motor limits:** ±90° from starting position (wire constraint, no slip ring)
+## Thiết lập phần cứng
 
-## Control Architecture
-- State machine: WAITING → BALANCING (engages within ±25° of vertical)
-- PID output controls motor position (not velocity)
-- Low-pass filter on pendulum angle before PID calculation
-- Anti-windup on integral term with limit and decay at motor limits
+- **Động cơ:** Động cơ bước NEMA17 với driver DRV8825, chế độ vi bước 8x (1600 bước/vòng - steps/rev)
+- **Cảm biến mã hóa vòng quay:** AS5600 magnetic encoder (12-bit, 4096 xung/vòng - counts/rev)
+- **Bộ điều khiển:** Arduino Nano (ATmega328P, 16MHz)
+- **Giới hạn động cơ:** ±90° từ vị trí bắt đầu (ràng buộc dây nối, không có cổ góp slip ring)
+
+## Kiến trúc điều khiển
+
+- Giản đồ trạng thái (State machine): WAITING (Chờ) → BALANCING (Cân bằng, kích hoạt trong khoảng ±25° so với phương thẳng đứng)
+- Đầu ra PID điều khiển vị trí động cơ (không phải vận tốc)
+- Lọc thông thấp góc lệch con lắc trước khi tính toán PID
+- Chống bão hòa tích phân (Anti-windup) cho thành phần tích phân với các giới hạn và suy giảm tại giới hạn động cơ
 
 ---
 
-## Iteration 1: Original Ziegler-Nichols Values
+## Lần thử 1: Các giá trị Ziegler-Nichols ban đầu
 
-**Date:** 2025-01-10
+**Ngày:** 10/01/2025
 
-**Parameters:**
-| Parameter | Value |
+**Các tham số:**
+| Tham số | Giá trị |
 |-----------|-------|
-| Kp | 1.2 (0.6 × Ku, where Ku=2.0) |
-| Ki | 24.0 (2 × Kp / Tu, where Tu=0.1) |
+| Kp | 1.2 (0.6 × Ku, với Ku=2.0) |
+| Ki | 24.0 (2 × Kp / Tu, với Tu=0.1) |
 | Kd | 0.015 (Kp × Tu / 8) |
-| Filter | 500 Hz |
-| Motor MaxSpeed | 200000 |
-| Motor Accel | 100000 |
+| Bộ lọc (Filter) | 500 Hz |
+| Tốc độ tối đa động cơ (Motor MaxSpeed) | 200000 |
+| Gia tốc động cơ (Motor Accel) | 100000 |
 
-**Bugs found in code review:**
-- Integer division bug: `controlPeriod = 1/1000 = 0` (always true condition)
-- No integral anti-windup
-- Motor limit just froze instead of clamping
-- Tare function did nothing
+**Các lỗi phát hiện khi review mã nguồn:**
+- Lỗi chia số nguyên: `controlPeriod = 1/1000 = 0` (điều kiện luôn đúng)
+- Không có chống bão hòa tích phân (integral anti-windup)
+- Giới hạn động cơ chỉ dừng cứng thay vì cắt giới hạn (clamping)
+- Hàm Tare (hiệu chuẩn góc) không hoạt động
 
-**Observations:**
-- Motor drifted heavily toward ±90° limits
-- Hit saturation and lost balance
-- Balanced for ~6 seconds before falling
-- Integral wind-up caused persistent drift
+**Quan sát:**
+- Động cơ bị trôi mạnh về phía các giới hạn ±90°
+- Đạt ngưỡng bão hòa và mất cân bằng
+- Cân bằng được khoảng ~6 giây trước khi rơi
+- Hiện tượng bão hòa tích phân (integral wind-up) gây ra trôi lệch liên tục
 
 ---
 
-## Iteration 2: Reduced Ki, Increased Kd
+## Lần thử 2: Giảm Ki, Tăng Kd
 
-**Date:** 2025-01-10
+**Ngày:** 10/01/2025
 
-**Parameters:**
-| Parameter | Value | Change |
+**Các tham số:**
+| Tham số | Giá trị | Thay đổi |
 |-----------|-------|--------|
 | Kp | 1.2 | - |
-| Ki | 6.0 | ↓ from 24.0 |
-| Kd | 0.03 | ↑ from 0.015 |
-| Filter | 500 Hz | - |
+| Ki | 6.0 | ↓ từ 24.0 |
+| Kd | 0.03 | ↑ từ 0.015 |
+| Bộ lọc | 500 Hz | - |
 
-**Observations:**
-- Motor no longer saturating at ±90° (stayed within ±60°)
-- Motor returns toward center after falls
-- Still very oscillatory during balance attempts
-- Rapid oscillations ~±20-30° not decaying
-- System on edge of stability
+**Quan sát:**
+- Động cơ không còn bị bão hòa ở giới hạn ±90° (nằm trong khoảng ±60°)
+- Động cơ quay trở lại tâm sau khi con lắc rơi
+- Vẫn dao động rất mạnh trong các nỗ lực cân bằng
+- Các dao động nhanh ~±20-30° không bị triệt tiêu
+- Hệ thống ở ranh giới của sự ổn định
 
-**Diagnosis:** Insufficient damping, derivative amplifying high-frequency noise
+**Chẩn đoán:** Thiếu giảm chấn (damping), thành phần vi phân (derivative) khuếch đại nhiễu tần số cao.
 
 ---
 
-## Iteration 3: More Damping, Lower Filter
+## Lần thử 3: Tăng giảm chấn, Hạ tần số cắt bộ lọc
 
-**Date:** 2025-01-10
+**Ngày:** 10/01/2025
 
-**Parameters:**
-| Parameter | Value | Change |
+**Các tham số:**
+| Tham số | Giá trị | Thay đổi |
 |-----------|-------|--------|
-| Kp | 1.0 | ↓ from 1.2 |
+| Kp | 1.0 | ↓ từ 1.2 |
 | Ki | 6.0 | - |
-| Kd | 0.08 | ↑ from 0.03 |
-| Filter | 100 Hz | ↓ from 500 Hz |
+| Kd | 0.08 | ↑ từ 0.03 |
+| Bộ lọc | 100 Hz | ↓ từ 500 Hz |
 
-**Observations:**
-- High-frequency oscillations eliminated (filter working)
-- Motor stays within ±60° (no saturation)
-- Best stable period at end of run with ~±10-15° error
-- Still falling and needing recovery multiple times
-- Slower oscillations remain during balance
-- Clear improvement over previous iterations
+**Quan sát:**
+- Các dao động tần số cao bị loại bỏ (bộ lọc hoạt động tốt)
+- Động cơ nằm trong khoảng ±60° (không bị bão hòa)
+- Khoảng thời gian ổn định tốt nhất đạt được ở cuối lượt chạy với sai số ~±10-15°
+- Vẫn bị rơi và cần phục hồi nhiều lần
+- Các dao động chậm hơn vẫn tồn tại khi cân bằng
+- Cải thiện rõ rệt so với các lần thử trước
 
-**Diagnosis:** Better, but still needs more damping or less aggression
-
----
-
-## Iteration 4: Bug Fix + Enhanced Diagnostics
-
-**Date:** 2025-01-10
-
-**Bug fixes applied:**
-- Fixed first-loop timing bug: `prev_time_us` now initialized in `setup()` to avoid huge dt on first iteration
-- This was causing derivative spikes and filter miscalculation on startup
-
-**Enhanced data collection:**
-- Now collecting individual PID terms (P, I, D) for diagnosis
-- Added state (WAITING/BALANCING) to output
-- New plot: `plot_pid_terms.png` shows each term over time
-
-**Parameters:** Same as Iteration 3 (Kp=1.0, Ki=6.0, Kd=0.08, Filter=100Hz)
-
-**Next:** Run with bug fixes to establish new baseline, then continue tuning.
+**Chẩn đoán:** Tốt hơn, nhưng vẫn cần nhiều giảm chấn hơn hoặc giảm bớt độ nhạy điều khiển.
 
 ---
 
-## Iteration 5: Timing Optimization & Fixed 1 kHz Loop
+## Lần thử 4: Sửa lỗi + Cải tiến tính năng chẩn đoán
 
-**Date:** 2025-01-10
+**Ngày:** 10/01/2025
 
-**Problem:** Loop timing was inconsistent, varying widely based on what code executed each iteration. Serial output was causing significant delays and false overrun detections.
+**Các lỗi đã sửa:**
+- Sửa lỗi thời gian vòng lặp đầu tiên: `prev_time_us` hiện được khởi tạo trong hàm `setup()` để tránh giá trị dt khổng lồ ở lượt chạy đầu tiên
+- Lỗi này từng gây ra các đột biến vi phân và tính toán sai bộ lọc khi khởi động
 
-**Changes:**
+**Cải tiến thu thập dữ liệu:**
+- Thu thập riêng lẻ các thành phần PID (P, I, D) để chẩn đoán
+- Thêm trạng thái (WAITING/BALANCING) vào đầu ra
+- Đồ thị mới: `plot_pid_terms.png` hiển thị từng thành phần theo thời gian
 
-1. **Fixed-rate control loop (1 kHz)**
-   - Implemented early-return pattern: loop exits immediately if <1000μs elapsed
-   - Ensures consistent dt for PID calculations
-   - Added overrun detection (flags iterations >1.5x expected period)
+**Các tham số:** Giống như Lần thử 3 (Kp=1.0, Ki=6.0, Kd=0.08, Bộ lọc=100Hz)
 
-2. **I2C speed increase (100 kHz → 400 kHz)**
-   - AS5600 encoder read reduced from ~650μs to ~290μs
-   - This was the main bottleneck consuming 65% of loop time
+**Tiếp theo:** Chạy với các lỗi đã sửa để thiết lập baseline mới, sau đó tiếp tục tinh chỉnh.
 
-3. **Serial output optimization**
-   - Problem: `Serial.print(float, 2)` takes ~500μs per call due to AVR software float formatting
-   - Solution: Transmit values as integers (×1000), decode in Julia
-   - Further optimization: Use `ltoa()` + manual buffer concatenation instead of `snprintf`
-   - Result: Serial output no longer causes overruns
+---
 
-4. **Baud rate increase (115200 → 500000)**
-   - Reduces time spent waiting for TX buffer
-   - Arduino Nano supports up to 2 Mbaud, but 500k is reliable
+## Lần thử 5: Tối ưu hóa thời gian & Vòng lặp 1 kHz cố định
 
-**Serial output comparison:**
+**Ngày:** 10/01/2025
 
-| Approach | Overruns | Loop Freq | Flash Size |
+**Vấn đề:** Thời gian vòng lặp không nhất quán, thay đổi nhiều dựa trên mã nguồn thực thi ở mỗi lượt. Đầu ra serial gây ra độ trễ đáng kể và cảnh báo quá thời gian (overrun) giả.
+
+**Các thay đổi:**
+
+1. **Vòng lặp điều khiển tần số cố định (1 kHz)**
+   - Triển khai mẫu thiết kế thoát sớm (early-return): vòng lặp thoát ngay lập tức nếu chưa trôi qua <1000μs
+   - Đảm bảo dt nhất quán cho các tính toán PID
+   - Thêm tính năng phát hiện quá thời gian (đánh dấu các lượt chạy >1.5 lần chu kỳ kỳ vọng)
+
+2. **Tăng tốc độ I2C (100 kHz → 400 kHz)**
+   - Thời gian đọc encoder AS5600 giảm từ ~650μs xuống ~290μs
+   - Đây là điểm nghẽn chính chiếm 65% thời gian vòng lặp
+
+3. **Tối ưu hóa đầu ra Serial**
+   - Vấn đề: Hàm `Serial.print(float, 2)` mất ~500μs cho mỗi cuộc gọi do định dạng số thực float bằng phần mềm trên AVR
+   - Giải pháp: Truyền các giá trị dưới dạng số nguyên (nhân 1000), giải mã trong Julia
+   - Tối ưu hóa thêm: Sử dụng hàm `ltoa()` + nối chuỗi thủ công vào bộ đệm thay vì dùng `snprintf`
+   - Kết quả: Đầu ra serial không còn gây ra lỗi quá thời gian
+
+4. **Tăng tốc độ baud (115200 → 500000)**
+   - Giảm thời gian chờ đợi bộ đệm TX
+   - Arduino Nano hỗ trợ tối đa 2 Mbaud, nhưng mức 500k hoạt động ổn định
+
+**So sánh đầu ra Serial:**
+
+| Phương pháp | Lượt quá thời gian (Overruns) | Tần số vòng lặp | Kích thước Flash |
 |----------|----------|-----------|------------|
-| Float Serial.print() ×9 calls | 1065 | 881 Hz | 12,994 B |
-| Integer ×1000 Serial.print() ×9 | 0 | 985 Hz | 12,560 B |
-| Integer snprintf buffer | 0 | 1001 Hz | 13,904 B |
-| Integer ltoa buffer (final) | 0 | 1003 Hz | 12,700 B |
+| Float Serial.print() ×9 cuộc gọi | 1065 | 881 Hz | 12,994 B |
+| Số nguyên ×1000 Serial.print() ×9 | 0 | 985 Hz | 12,560 B |
+| Bộ đệm snprintf số nguyên | 0 | 1001 Hz | 13,904 B |
+| Bộ đệm ltoa số nguyên (cuối cùng) | 0 | 1003 Hz | 12,700 B |
 
-**Final timing results:**
-- Loop frequency: 1003 Hz mean (target: 1000 Hz)
-- Loop frequency range: 900-1100 Hz
-- Overruns: 0
+**Kết quả thời gian cuối cùng:**
+- Tần số vòng lặp: trung bình 1003 Hz (mục tiêu: 1000 Hz)
+- Phạm vi tần số vòng lặp: 900-1100 Hz
+- Lượt quá thời gian: 0
 
-**Parameters:** Kp=0.8, Ki=4.0, Kd=0.015, Filter=100Hz
-
----
-
-## Next Steps
-
-Timing infrastructure is now solid. Ready to focus on PID tuning with reliable data collection.
+**Các tham số:** Kp=0.8, Ki=4.0, Kd=0.015, Bộ lọc=100Hz
 
 ---
 
-## Systematic Tuning Approach
+## Các bước tiếp theo
 
-1. **Fix bugs first** - ensure system behaves as expected
-2. **Collect diagnostic data** - PID terms, state, timing
-3. **One parameter at a time** - isolate effects of each change
-4. **Quantitative comparison** - use RMS error, balancing time metrics
-5. **Document everything** - track what works and what doesn't
+Hạ tầng thời gian hiện tại đã ổn định. Sẵn sàng tập trung vào tinh chỉnh PID với khả năng thu thập dữ liệu đáng tin cậy.
 
 ---
 
-## Notes
+## Phương pháp tinh chỉnh hệ thống (Systematic Tuning Approach)
 
-- AccelStepper on Arduino Nano limited to ~4000 steps/sec with `run()`
-- Current maxSpeed/acceleration settings (200000/100000) are above this limit but acceleration is high enough to act nearly instant
-- Engagement margin of ±25° seems appropriate
-- Motor limit of ±90° is a hard constraint due to wiring
+1. **Sửa lỗi trước** - đảm bảo hệ thống hoạt động như mong đợi
+2. **Thu thập dữ liệu chẩn đoán** - các thành phần PID, trạng thái, thời gian
+3. **Thay đổi từng tham số một** - cô lập ảnh hưởng của mỗi thay đổi
+4. **So sánh định lượng** - sử dụng sai số RMS, các chỉ số thời gian cân bằng
+5. **Tài liệu hóa mọi thứ** - theo dõi những gì hiệu quả và những gì không
+
+---
+
+## Ghi chú
+
+- Thư viện AccelStepper trên Arduino Nano bị giới hạn ở khoảng ~4000 steps/sec khi sử dụng hàm `run()`
+- Các thiết lập maxSpeed/acceleration hiện tại (200000/100000) vượt quá giới hạn này nhưng gia tốc đủ cao để hoạt động gần như tức thời
+- Biên độ kích hoạt ±25° hoạt động phù hợp
+- Giới hạn động cơ ±90° là một ràng buộc cứng do dây nối

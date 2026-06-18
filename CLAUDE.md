@@ -1,247 +1,231 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Tài liệu này cung cấp hướng dẫn cho Claude Code (claude.ai/code) khi làm việc với mã nguồn trong kho lưu trữ này.
 
-## Active initiatives
+## Các sáng kiến đang hoạt động (Active initiatives)
 
-- **RL controller**: a multi-phase effort to replace the hand-tuned PID with a learned swing-up + balance policy. The living plan, phase status, and decisions log are in `RL_PLAN.md` at the repo root. Read that file before working on anything under `RotaryInvertedPendulum-arduino/LowLevelServer/`, `RotaryInvertedPendulum-arduino/RLControl/`, or `RotaryInvertedPendulum-python/src/rl/`. Companion docs:
-  - `docs/rl_transitions.md` — the `(s, a, r, s')` transition contract in plain English.
-  - `docs/async_control_architecture.md` — the threaded runtime that holds the configured control rate strictly during fine-tuning.
-  - `docs/control_rate_selection.md` — how to pick `control_freq_hz` and `max_action_delta_rad` from sysid measurements.
-  - `docs/sysid_runbook.md` — the measurement procedure for the inputs the two docs above depend on.
+- **Bộ điều khiển RL**: nỗ lực nhiều giai đoạn để thay thế PID tinh chỉnh thủ công bằng chính sách swing-up + cân bằng (balance) tự học. Kế hoạch hiện tại, trạng thái giai đoạn và nhật ký quyết định nằm trong tệp `RL_PLAN.md` ở thư mục gốc của repo. Hãy đọc tệp đó trước khi làm việc với bất kỳ thứ gì dưới thư mục `RotaryInvertedPendulum-arduino/LowLevelServer/`, `RotaryInvertedPendulum-arduino/RLControl/`, hoặc `RotaryInvertedPendulum-python/src/rl/`. Các tài liệu đồng hành:
+  - `docs/rl_transitions.md` — đặc tả chuyển trạng thái `(s, a, r, s')` bằng ngôn ngữ tự nhiên.
+  - `docs/async_control_architecture.md` — runtime đa luồng giữ tần số điều khiển (control rate) nghiêm ngặt trong quá trình tinh chỉnh (fine-tuning).
+  - `docs/control_rate_selection.md` — cách chọn `control_freq_hz` và `max_action_delta_rad` từ các phép đo sysid.
+  - `docs/sysid_runbook.md` — quy trình đo lường cho các đầu vào mà hai tài liệu trên phụ thuộc vào.
 
-## Where physical parameters live
+## Nơi lưu trữ các tham số vật lý (Physical parameters)
 
-The rotary inverted pendulum has one source of truth per parameter
-class. Updating a number in any other place is a bug — the chain is:
+Hệ thống con lắc ngược quay có một nguồn chân lý duy nhất (source of truth) cho mỗi nhóm tham số. Cập nhật một số ở bất kỳ nơi nào khác đều là lỗi — chuỗi truyền dẫn là:
 
-- **Pendulum body geometry** (mass, COM, inertia tensor): authored in
-  Onshape → exported to `urdf/model.urdf` → parsed at import time by
-  `RotaryInvertedPendulum-python/src/rl/pendulum_geometry.py` →
-  consumed by `pendulum_env.py` (MuJoCo sim + DR), `sysid_core.py`
-  (friction derivation, sanity-check against measured period), and the
-  Julia stack (MeshCat viz, RigidBodyDynamics MPC). To change pendulum
-  mass/COM/inertia, edit Onshape → export the URDF; nothing else.
+- **Hình học của con lắc** (khối lượng - mass, tâm khối - COM, tensor quán tính - inertia tensor): được thiết kế trong Onshape → xuất sang `urdf/model.urdf` → được phân tích lúc import bởi `RotaryInvertedPendulum-python/src/rl/pendulum_geometry.py` → được sử dụng bởi `pendulum_env.py` (mô phỏng MuJoCo + DR), `sysid_core.py` (tính toán ma sát, kiểm tra chéo với chu kỳ đo được), và stack Julia (trực quan hóa MeshCat, RigidBodyDynamics MPC). Để thay đổi khối lượng/COM/quán tính của con lắc, hãy chỉnh sửa trong Onshape → xuất tệp URDF; không sửa gì khác.
 
-- **Per-rig dynamic state** (viscous + Coulomb friction): measured by
-  `sysid_wizard.py` from a free-swing recording on the actual hardware,
-  written to `RotaryInvertedPendulum-python/src/rl/sysid_params.json`,
-  loaded into `PendulumParams` alongside the URDF constants. These do
-  vary between rebuilds (bearings, grease, temperature) and are the
-  only quantities the sysid pipeline measures.
+- **Trạng thái động lực học của từng rig** (ma sát nhớt + Coulomb): được đo bởi `sysid_wizard.py` từ bản ghi tự quay tự do trên phần cứng thực tế, ghi vào `RotaryInvertedPendulum-python/src/rl/sysid_params.json`, tải vào `PendulumParams` cùng với các hằng số URDF. Các giá trị này thay đổi giữa các lần lắp ráp lại (ổ đỡ, mỡ bôi trơn, nhiệt độ) và là các đại lượng duy nhất mà pipeline sysid đo lường.
 
-- **Arm geometry** (length, mass, COM): currently hard-coded constants
-  in `pendulum_env.py` (`ARM_*`). When CAD-validated, will follow the
-  pendulum pattern — read from the `arm` link in `urdf/model.urdf`.
+- **Hình học của cánh tay (arm)** (chiều dài, khối lượng, COM): hiện là các hằng số được hard-code trong `pendulum_env.py` (`ARM_*`). Khi được xác thực bằng CAD, sẽ tuân theo mẫu của con lắc — đọc từ liên kết `arm` trong `urdf/model.urdf`.
 
-- **Hardware/firmware constants** (motor max accel, AS5600 resolution,
-  hard-stop limits): module constants in `pendulum_env.py`, with the
-  Arduino firmware as the upstream source for the motor-side values.
+- **Hằng số phần cứng/firmware** (gia tốc tối đa của motor, độ phân giải AS5600, giới hạn dừng vật lý): các hằng số module trong `pendulum_env.py`, với firmware Arduino là nguồn cấp trên (upstream) cho các giá trị phía động cơ.
 
-## Overview
+## Tổng quan
 
-This is a rotary inverted pendulum control project - a classic control theory problem demonstrating system stabilization. The system consists of a pendulum mounted on a rotary base that must be balanced upright by controlling the base rotation. The project includes mechanical designs (3D printable), electronics (Arduino-based), and multiple control implementations.
+Đây là dự án điều khiển con lắc ngược quay (rotary inverted pendulum) - một bài toán lý thuyết điều khiển cổ điển chứng minh khả năng ổn định hệ thống. Hệ thống gồm một con lắc gắn trên một đế quay, con lắc phải được giữ cân bằng thẳng đứng bằng cách điều khiển chuyển động quay của đế. Dự án bao gồm các thiết kế cơ khí (có thể in 3D), linh kiện điện tử (dựa trên Arduino) và nhiều giải thuật điều khiển khác nhau.
 
-## Project Structure
+## Cấu trúc dự án
 
-The repository is organized into three main software components:
+Kho lưu trữ được tổ chức thành ba thành phần phần mềm chính:
 
-- **RotaryInvertedPendulum-arduino/**: Arduino C++ code for the microcontroller (Arduino Nano)
-  - `LowLevelServer/`: Low-level server for computer-controlled operation via serial
-  - `PIDControl/`: Self-contained PID controller running on Arduino
-  - `TestEncoder/`, `TestMotor/`, `TestSerial/`, etc.: Hardware test sketches
+- **RotaryInvertedPendulum-arduino/**: Mã nguồn C++ Arduino cho vi điều khiển (Arduino Nano)
+  - `LowLevelServer/`: Server cấp thấp cho hoạt động điều khiển từ máy tính thông qua kết nối serial
+  - `PIDControl/`: Bộ điều khiển PID độc lập chạy trực tiếp trên Arduino
+  - `TestEncoder/`, `TestMotor/`, `TestSerial/`, v.v.: Các bản sketch kiểm tra phần cứng
 
-- **RotaryInvertedPendulum-julia/**: Julia control algorithms and visualization
-  - `src/`: Main Julia package code
-  - `notebooks/`: Jupyter notebooks for experimentation (e.g., MPC development)
+- **RotaryInvertedPendulum-julia/**: Các thuật toán điều khiển bằng Julia và trực quan hóa
+  - `src/`: Mã nguồn gói Julia chính
+  - `notebooks/`: Các Jupyter notebook để thử nghiệm (ví dụ: phát triển MPC)
 
-- **RotaryInvertedPendulum-python/**: Python control implementations
-  - `src/`: Python control code (gamepad control)
-  - `test/`: Test scripts
+- **RotaryInvertedPendulum-python/**: Các triển khai điều khiển bằng Python
+  - `src/`: Mã nguồn điều khiển Python (điều khiển bằng gamepad)
+  - `test/`: Các tập lệnh kiểm tra (test scripts)
 
-Additional directories:
-- `meshes/`: 3D-printable STL files for mechanical components
-- `diagrams/`: Circuit diagrams and system schematics
-- `urdf/`: Robot model description files
+Các thư mục bổ sung:
+- `meshes/`: Các tệp STL in 3D cho linh kiện cơ khí
+- `diagrams/`: Sơ đồ mạch và sơ đồ hệ thống
+- `urdf/`: Các tệp mô tả mô hình robot
 
-## Hardware Architecture
+## Kiến trúc phần cứng
 
-The system uses:
-- **Arduino Nano**: Microcontroller for sensor reading and motor control
-- **AS5600 Magnetic Encoder**: Measures pendulum angle (I2C communication)
-- **Stepper Motor (NEMA17)**: Rotates the base arm (via driver like DRV8825/A4988/TMC2209)
-- **AccelStepper Library**: Controls stepper motor with acceleration profiles
+Hệ thống sử dụng:
+- **Arduino Nano**: Vi điều khiển để đọc cảm biến và điều khiển động cơ
+- **Cảm biến mã hóa vòng quay từ tính AS5600 (AS5600 Magnetic Encoder)**: Đo góc con lắc (giao tiếp I2C)
+- **Động cơ bước (NEMA17 Stepper Motor)**: Quay cánh tay đế (thông qua driver như DRV8825/A4988/TMC2209)
+- **Thư viện AccelStepper**: Điều khiển động cơ bước với các đặc tính gia tốc
 
-Communication between Arduino and computer is via serial at 2,000,000 baud.
+Giao tiếp giữa Arduino và máy tính qua cổng serial với tốc độ baud 2,000,000.
 
-## Control Approaches
+## Các phương pháp điều khiển
 
-Two main control architectures:
+Hai kiến trúc điều khiển chính:
 
-1. **On-device control** (Arduino): PID controller runs entirely on Arduino Nano
-   - Portable, no computer required
-   - Limited computational power
-   - See: `RotaryInvertedPendulum-arduino/PIDControl/PIDControl.ino`
+1. **Điều khiển trên thiết bị** (Arduino): Bộ điều khiển PID chạy hoàn toàn trên Arduino Nano
+   - Nhỏ gọn, không cần máy tính
+   - Khả năng tính toán hạn chế
+   - Xem: `RotaryInvertedPendulum-arduino/PIDControl/PIDControl.ino`
 
-2. **Computer-based control** (Julia/Python): Arduino acts as low-level server
-   - High computational power for advanced algorithms (MPC, LQR)
-   - Requires USB connection to computer
-   - Arduino code: `LowLevelServer/LowLevelServer.ino`
-   - Client code: Julia files in `src/` or Python in `RotaryInvertedPendulum-python/`
+2. **Điều khiển trên máy tính** (Julia/Python): Arduino đóng vai trò là server cấp thấp (low-level server)
+   - Khả năng tính toán cao cho các thuật toán nâng cao (MPC, LQR)
+   - Yêu cầu kết nối USB với máy tính
+   - Mã nguồn Arduino: `LowLevelServer/LowLevelServer.ino`
+   - Mã nguồn client: Các tệp Julia trong `src/` hoặc Python trong `RotaryInvertedPendulum-python/`
 
-## Serial Communication Protocol
+## Giao thức truyền thông Serial
 
-### Text-based protocol (PIDControl)
-Commands are sent as text strings:
-- `"1"`: Check if ready
-- `"2"`: Get motor position
-- `"3"`: Get pendulum position
-- `"4 <position>"`: Set target motor position
-- `"5"`: Start motor
-- `"6"`: Stop motor
+### Giao thức dạng văn bản (PIDControl)
+Các lệnh được gửi dưới dạng chuỗi văn bản:
+- `"1"`: Kiểm tra xem đã sẵn sàng chưa
+- `"2"`: Lấy vị trí động cơ
+- `"3"`: Lấy vị trí con lắc
+- `"4 <position>"`: Đặt vị trí động cơ mục tiêu
+- `"5"`: Khởi động động cơ
+- `"6"`: Dừng động cơ
 
-### Binary protocol (LowLevelServer)
-Commands are single bytes:
-- `0x01`: Check ready
-- `0x02`: Get state (returns time, motor position, pendulum position as floats)
-- `0x03`: Set target (expects 4-byte float in radians)
-- `0x04`: Engage motor
-- `0x05`: Disengage motor
+### Giao thức dạng nhị phân (LowLevelServer)
+Các lệnh là các byte đơn lẻ:
+- `0x01`: Kiểm tra sẵn sàng
+- `0x02`: Lấy trạng thái (trả về thời gian, vị trí động cơ, vị trí con lắc dưới dạng số thực float)
+- `0x03`: Đặt mục tiêu (yêu cầu số thực float 4-byte tính bằng radian)
+- `0x04`: Kích hoạt động cơ (engage)
+- `0x05`: Ngắt kích hoạt động cơ (disengage)
 
-## Julia Development
+## Phát triển với Julia
 
-### Setup
+### Thiết lập
 ```bash
 cd RotaryInvertedPendulum-julia
 julia --project=.
 ```
 
-In Julia REPL:
+Trong Julia REPL:
 ```julia
 using Pkg
-Pkg.instantiate()  # Install dependencies
+Pkg.instantiate()  # Cài đặt các thư viện phụ thuộc
 ```
 
-### Running Control Scripts
+### Chạy các Script điều khiển
 
-PID control from Julia:
+Điều khiển PID từ Julia:
 ```julia
 using RotaryInvertedPendulum
-pid_control()  # Default: 2000000 baud, 200 Hz control
+pid_control()  # Mặc định: baud 2000000, tần số điều khiển 200 Hz
 ```
 
-Low-level server client with visualization:
+Client server cấp thấp có trực quan hóa:
 ```bash
 julia --project=. ../RotaryInvertedPendulum-arduino/LowLevelServer/client.jl --visualise
 ```
 
-### Key Julia Files
+### Các tệp Julia quan trọng
 
-- `RotaryInvertedPendulum.jl`: Main module, defines serial commands and Arduino communication
-- `control_pid.jl`: PID controller implementation communicating over serial
-- `control_gamepad.jl`: Gamepad-based manual control
-- `mpc.jl`: Model Predictive Control implementation with system linearization
-- `utils.jl`: Utility functions
-- `precompile.jl`: Package precompilation for faster startup
+- `RotaryInvertedPendulum.jl`: Module chính, định nghĩa các lệnh serial và giao tiếp Arduino
+- `control_pid.jl`: Triển khai bộ điều khiển PID giao tiếp qua cổng serial
+- `control_gamepad.jl`: Điều khiển thủ công bằng Gamepad
+- `mpc.jl`: Triển khai bộ điều khiển dự báo mô hình (Model Predictive Control) với tuyến tính hóa hệ thống
+- `utils.jl`: Các hàm tiện ích
+- `precompile.jl`: Biên dịch trước gói để khởi động nhanh hơn
 
-### Dependencies
-The Julia package uses:
-- `LibSerialPort`: Serial communication with Arduino
-- `RigidBodyDynamics`: For system dynamics modeling
-- `ForwardDiff`: Automatic differentiation for MPC linearization
-- `MeshCat`, `MeshCatMechanisms`: 3D visualization
-- `Joysticks`: Gamepad support
-- `Plots`: Data plotting
+### Các thư viện phụ thuộc
+Gói Julia sử dụng:
+- `LibSerialPort`: Giao tiếp serial với Arduino
+- `RigidBodyDynamics`: Để mô hình hóa động lực học hệ thống
+- `ForwardDiff`: Đạo hàm tự động (automatic differentiation) cho tuyến tính hóa MPC
+- `MeshCat`, `MeshCatMechanisms`: Trực quan hóa 3D
+- `Joysticks`: Hỗ trợ Gamepad
+- `Plots`: Vẽ đồ thị dữ liệu
 
-## Arduino Development
+## Phát triển với Arduino
 
-### Prerequisites
-Libraries required (install via Arduino IDE Library Manager):
+### Yêu cầu trước
+Các thư viện cần thiết (cài đặt qua Arduino IDE Library Manager):
 - [AccelStepper](https://www.airspayce.com/mikem/arduino/AccelStepper/)
-- [AS5600](https://github.com/Seeed-Studio/Seeed_Arduino_AS5600) (included in `libs/`)
+- [AS5600](https://github.com/Seeed-Studio/Seeed_Arduino_AS5600) (được bao gồm trong thư mục `libs/`)
 
-### Flashing Arduino
-1. Open `.ino` file in Arduino IDE
-2. Select Board: "Arduino Nano"
-3. Select Port: `/dev/cu.usbserial-*` (macOS) or appropriate COM port
-4. Upload sketch
+### Nạp chương trình cho Arduino
+1. Mở tệp `.ino` trong Arduino IDE
+2. Chọn Board: "Arduino Nano"
+3. Chọn Port: `/dev/cu.usbserial-*` (macOS) hoặc cổng COM phù hợp (Windows)
+4. Tải lên (Upload) sketch
 
-### Key Arduino Concepts
+### Các khái niệm Arduino quan trọng
 
-**Stepper Motor Configuration:**
-- Microstepping: 8 (default) → 1600 steps/revolution
-- Enable pin inverted (DRV8825 uses active-low enable)
-- Max speed: 200,000 steps/sec
-- Acceleration: 100,000 steps/sec²
+**Cấu hình động cơ bước (Stepper Motor):**
+- Microstepping: 8 (mặc định) → 1600 bước/vòng quay (steps/revolution)
+- Chân Enable bị đảo ngược (DRV8825 sử dụng chân enable tích cực mức thấp - active-low)
+- Tốc độ tối đa: 200,000 steps/sec
+- Gia tốc: 100,000 steps/sec²
 
-**AS5600 Encoder:**
-- Provides 12-bit resolution (0-4095 raw values)
-- Maps to 0-360° or 0-2π radians
-- Handles multi-revolution tracking with wraparound logic
-- Check magnet strength on startup
+**Cảm biến AS5600 Encoder:**
+- Cung cấp độ phân giải 12-bit (giá trị thô 0-4095)
+- Ánh xạ tới góc 0-360° hoặc 0-2π radian
+- Xử lý việc theo dõi nhiều vòng quay với logic wraparound
+- Kiểm tra cường độ nam châm khi khởi động
 
-**PID Control Parameters:**
-- Control frequency: 200-1000 Hz (varies by implementation)
-- Manually tuned gains in `PIDControl.ino`: Kp=2.2, Ki=1.6, Kd=0.005
-- Motor position limits: ±90° from starting position (prevents wire choking)
-- Engagement margin: ±25° from vertical
+**Tham số điều khiển PID:**
+- Tần số điều khiển: 200-1000 Hz (tùy thuộc vào cách triển khai)
+- Các hệ số Kp, Ki, Kd được tinh chỉnh thủ công trong `PIDControl.ino`: Kp=2.2, Ki=1.6, Kd=0.005
+- Giới hạn vị trí động cơ: ±90° từ vị trí bắt đầu (tránh làm xoắn và đứt dây)
+- Biên kích hoạt điều khiển (engagement margin): ±25° từ phương thẳng đứng
 
-## Python Development
+## Phát triển với Python
 
-Python implementation is less developed but includes gamepad control and serial test scripts. Install dependencies and run scripts from `RotaryInvertedPendulum-python/`.
+Phiên bản Python ít được phát triển hơn nhưng bao gồm điều khiển bằng gamepad và các kịch bản kiểm tra serial. Cài đặt các thư viện phụ thuộc và chạy các kịch bản từ thư mục `RotaryInvertedPendulum-python/`.
 
-## Common Development Tasks
+## Các tác vụ phát triển thường gặp
 
-### Testing Hardware
-- **Test encoder**: Flash `TestEncoder/TestEncoder.ino`, open Serial Monitor/Plotter
-- **Test motor**: Flash `TestMotor/TestMotor.ino`
-- **Test serial communication**: Flash `TestSerial/TestSerial.ino`
+### Kiểm tra phần cứng
+- **Kiểm tra encoder**: Nạp chương trình `TestEncoder/TestEncoder.ino`, mở Serial Monitor/Plotter
+- **Kiểm tra động cơ**: Nạp chương trình `TestMotor/TestMotor.ino`
+- **Kiểm tra giao tiếp serial**: Nạp chương trình `TestSerial/TestSerial.ino`
 
-### Hardware-in-the-Loop Testing
-For automated testing with hardware connected, use the serial monitoring script:
+### Kiểm tra phần cứng trong vòng lặp (Hardware-in-the-Loop Testing)
+Để kiểm tra tự động khi đã kết nối phần cứng, hãy sử dụng kịch bản giám sát serial:
 
 ```bash
 ./RotaryInvertedPendulum-arduino/scripts/monitor_serial.sh <port> <baud_rate> <duration>
 ```
 
-This script properly handles Arduino reset on serial connection and flushes old buffer data to provide clean output. Useful for verifying Arduino behavior during development without manual intervention.
+Tập lệnh này xử lý đúng cách việc khởi động lại Arduino khi kết nối serial và xóa dữ liệu đệm cũ để cung cấp đầu ra sạch. Hữu ích cho việc xác minh hành vi của Arduino trong quá trình phát triển mà không cần can thiệp thủ công.
 
-Example:
+Ví dụ:
 ```bash
 ./RotaryInvertedPendulum-arduino/scripts/monitor_serial.sh /dev/cu.usbserial-10 115200 10
 ```
 
-**Note:** This approach avoids common issues with direct `cat` or `stty` usage that can cause double resets or capture stale buffered data.
+**Lưu ý:** Cách tiếp cận này tránh được các vấn đề phổ biến khi sử dụng trực tiếp lệnh `cat` hoặc `stty` vốn có thể gây ra hiện tượng reset kép hoặc lấy dữ liệu đệm cũ.
 
-### Serial Port Issues
-On macOS, the Arduino typically appears as `/dev/cu.usbserial-110` or similar. Update the port string in Julia/Python code if different.
+### Các vấn đề về cổng Serial
+Trên macOS, Arduino thường xuất hiện dưới dạng `/dev/cu.usbserial-110` hoặc tương tự. Cập nhật chuỗi cổng trong mã Julia/Python nếu có sự khác biệt.
 
-### Current Limiting
-Set stepper driver current limit to 0.9A (90% of motor's 1A rating) using the onboard potentiometer. Vref formulas vary by driver - see README.md.
+### Giới hạn dòng điện (Current Limiting)
+Đặt giới hạn dòng điện của driver động cơ bước thành 0.9A (90% công suất định mức 1A của động cơ) bằng biến trở tinh chỉnh (potentiometer) trên bo mạch. Công thức tính Vref khác nhau tùy theo driver - xem README.md.
 
-## Control Theory Notes
+## Ghi chú về lý thuyết điều khiển
 
-The system implements a state-space approach where:
-- State: `[motor_angle, pendulum_angle, motor_velocity, pendulum_velocity]`
-- Control input: motor torque (converted to position commands for stepper)
+Hệ thống triển khai phương pháp không gian trạng thái (state-space) trong đó:
+- Trạng thái: `[motor_angle, pendulum_angle, motor_velocity, pendulum_velocity]`
+- Đầu vào điều khiển: mô-men xoắn động cơ (được chuyển đổi thành các lệnh vị trí cho động cơ bước)
 
-**MPC Implementation** (`mpc.jl`):
-- Linearizes nonlinear dynamics using `RigidBodyDynamics` and `ForwardDiff`
-- Uses RK4 integration for discrete-time dynamics
-- Linearization point: pendulum upright (π radians), motor at origin
+**Triển khai MPC** (`mpc.jl`):
+- Tuyến tính hóa động lực học phi tuyến bằng cách sử dụng `RigidBodyDynamics` và `ForwardDiff`
+- Sử dụng tích phân RK4 cho động lực học thời gian rời rạc
+- Điểm tuyến tính hóa: con lắc thẳng đứng (π radian), động cơ ở vị trí gốc (origin)
 
-**State Machine** (both Arduino and Julia PID):
-- `WAITING`: Motor disabled, waiting for pendulum near vertical
-- `BALANCING`: Motor engaged, actively controlling
+**Giản đồ trạng thái (State Machine)** (cả Arduino và Julia PID):
+- `WAITING`: Động cơ bị vô hiệu hóa, chờ con lắc gần phương thẳng đứng
+- `BALANCING`: Động cơ hoạt động, tích cực điều khiển
 
-## URDF and Visualization
+## URDF và trực quan hóa
 
-The `urdf/` directory contains robot description files used by `RigidBodyDynamics.jl` for dynamics computation and `MeshCat` for 3D visualization.
+Thư mục `urdf/` chứa các tệp mô tả robot được sử dụng bởi `RigidBodyDynamics.jl` để tính toán động lực học và `MeshCat` để trực quan hóa 3D.
 
-## Serial Port Configuration
+## Cấu hình cổng Serial
 
-Arduino baud rate: 2,000,000 (high-speed for real-time control)
-- Read timeout: 50ms (typical)
-- Write timeout: 10ms (typical)
+Tốc độ baud Arduino: 2,000,000 (tốc độ cao để điều khiển thời gian thực)
+- Thời gian chờ đọc (Read timeout): 50ms (thông thường)
+- Thời gian chờ ghi (Write timeout): 10ms (thông thường)
 
-Always call `wait_until_ready(arduino)` after opening serial connection to synchronize with Arduino.
+Luôn gọi `wait_until_ready(arduino)` sau khi mở kết nối serial để đồng bộ hóa với Arduino.
