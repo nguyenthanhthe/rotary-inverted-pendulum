@@ -2,7 +2,7 @@
 
 [![Xem video lắp ráp](assets/youtube-thumbnail-pendulum-build.jpg)](https://www.youtube.com/watch?v=rKChjuuR7K8)
 
-Một hệ con lắc ngược quay (rotary inverted pendulum) tự chế (DIY) bạn có thể tự in, hàn và huấn luyện tại nhà — với chi phí linh kiện khoảng **£20**. Đây là một phiên bản mở, có thể can thiệp phần cứng/phần mềm (hackable) dựa trên các thiết bị mà bạn thường phải mua từ các nhà cung cấp thiết bị phòng thí nghiệm (như QUBE Servo 2 của Quanser có giá khoảng £4,500). Con lắc tự cân bằng bằng một chính sách học tăng cường (reinforcement-learning policy) được huấn luyện trong mô phỏng (simulation), tinh chỉnh trên phần cứng thực tế (real hardware), và lượng tử hóa (quantized) để chạy trên Arduino Nano.
+Một hệ con lắc ngược quay (rotary inverted pendulum) tự chế (DIY) bạn có thể tự in, hàn và huấn luyện tại nhà — với chi phí linh kiện khoảng **500.000đ** (chưa tới 20 USD). Đây là một phiên bản mở, có thể can thiệp phần cứng/phần mềm (hackable) dựa trên các thiết bị mà bạn thường phải mua từ các nhà cung cấp thiết bị phòng thí nghiệm (như QUBE Servo 2 của Quanser có giá khoảng 140 triệu VNĐ). Con lắc tự cân bằng bằng một chính sách học tăng cường (reinforcement-learning policy) được huấn luyện trong mô phỏng (simulation), tinh chỉnh trên phần cứng thực tế (real hardware), và lượng tử hóa (quantized) để chạy trên Arduino Nano.
 
 ## Có gì trong kho lưu trữ này
 
@@ -23,7 +23,7 @@ Một hệ con lắc ngược quay (rotary inverted pendulum) tự chế (DIY) b
 
 ## Bạn muốn mua hơn là tự chế?
 
-Các bộ KIT tự chế (DIY kits) có giá khoảng [$100–$200 trên AliExpress](https://www.aliexpress.com/w/wholesale-rotary-inverted-pendulum.html); bộ Quanser QUBE Servo 2 được đề cập ở trên có giá khoảng £4,500.
+Các bộ KIT tự chế (DIY kits) có giá khoảng [2.500.000đ - 5.000.000đ (100–200 USD) trên AliExpress](https://www.aliexpress.com/w/wholesale-rotary-inverted-pendulum.html); bộ Quanser QUBE Servo 2 được đề cập ở trên có giá khoảng 140 triệu VNĐ.
 
 ## Các nghiên cứu/dự án liên quan
 

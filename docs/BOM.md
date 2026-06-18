@@ -4,7 +4,7 @@ Các linh kiện cần thiết để chế tạo một bộ con lắc ngược q
 
 **Ước tính chi phí**  
 - Tổng chi phí mua bổ sung linh kiện (chưa có sẵn): **khoảng 330.000đ**.
-- Tổng chi phí chế tạo mới toàn bộ từ đầu (bao gồm cả các linh kiện đã có sẵn trong danh sách của bạn): **khoảng 470.000đ** (~£15) — rẻ hơn hàng trăm lần so với bộ Quanser QUBE có giá £4,500.
+- Tổng chi phí chế tạo mới toàn bộ từ đầu (bao gồm cả các linh kiện đã có sẵn trong danh sách của bạn): **khoảng 470.000đ** — rẻ hơn khoảng 300 lần so với bộ thiết bị Quanser QUBE 2 thương mại (giá niêm yết khoảng 140.000.000đ).
 
 **Cơ sở thiết kế**  
 Để hiểu rõ *tại sao* mỗi linh kiện điện tử được chọn (tính toán nguồn điện, chọn động cơ, so sánh các driver, tụ lọc nguồn, v.v.), hãy xem tài liệu [`electronics_design.md`](electronics_design.md). Bản BOM này thuần túy là tài liệu tham khảo để mua sắm.
