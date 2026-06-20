@@ -211,8 +211,14 @@ Sau khi có cấu hình vật lý thực tế của thiết bị của bạn tro
 
 ---
 
-## 6. Minh Họa Hệ Thống Điều Khiển Đồ Họa Cao Cấp
+## 6. Sơ Đồ Vật Lý Hệ Thống & Minh Họa Đồ Họa (System Physical Diagram & Graphic Illustration)
 
-Dưới đây là thiết kế phối cảnh 3D tổng quan về cấu trúc cơ khí và luồng phản hồi vòng kín của hệ thống con lắc ngược quay:
+### A. Sơ đồ cơ học Textbook (Textbook Physical Diagram)
+Sơ đồ dưới đây biểu diễn cấu trúc cơ học của con lắc ngược quay Furuta với các tham số độ dài tay quay (\(L_1\)), độ dài con lắc (\(L_2\)) và các góc lệch (\(\alpha\), \(\theta\)):
+
+![Sơ đồ vật lý con lắc ngược quay](../assets/rotary_pendulum_textbook_diagram.png)
+
+### B. Thiết kế phối cảnh 3D và luồng phản hồi vòng kín (3D Graphic Perspective)
+Dưới đây là thiết kế phối cảnh 3D tổng quan về cấu trúc cơ khí và luồng phản hồi vòng kín của hệ thống:
 
 ![Thiết kế đồ họa hệ thống Rotary Inverted Pendulum](../assets/rotary_pendulum_infographic.png)
