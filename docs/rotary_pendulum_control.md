@@ -1,6 +1,6 @@
 # Con Lắc Ngược Quay (Rotary Inverted Pendulum) - Kiến Trúc Điều Khiển & Quy Trình Sim-to-Real
 
-Tài liệu này cung cấp một cái nhìn tổng quan chi tiết về phương pháp điều khiển, các tầng kiến trúc hệ thống (layers), và quy trình huấn luyện từ mô phỏng sang thực tế (Sim-to-Real pipeline) của dự án.
+Tài liệu này cung cấp một cái nhìn tổng quan chi tiết về phương pháp điều khiển, các tầng kiến trúc hệ thống (layers), mô hình mạng nơ-ron hoạt động, và hướng dẫn chi tiết cách huấn luyện lại/tinh chỉnh (train/fine-tune) cho một thiết bị con lắc mới.
 
 ---
 
@@ -113,8 +113,106 @@ Huấn luyện trực tiếp với cấu hình khó ngay từ đầu khiến SAC
 
 ---
 
-## 4. Minh Họa Hệ Thống Điều Khiển
+## 4. Mô Phỏng Tầng Hoạt Động Của Mạng (Neural Network Layers Model)
 
-Dưới đây là hình ảnh minh họa đồ họa cao cấp của hệ thống con lắc ngược quay tích hợp mạng nơ-ron điều khiển:
+Khác với mạng CNN (Convolutional Neural Network) chuyên xử lý dữ liệu không gian dạng lưới lớn (hình ảnh) thông qua các lớp trích xuất đặc trưng (Convolution, Pooling) rồi mới làm phẳng (Flatten) để đưa vào các lớp kết nối đầy đủ (Fully Connected Layers); mạng điều khiển của con lắc ngược quay (MLP Policy) xử lý trực tiếp một **vectơ trạng thái đặc trưng kích thước nhỏ (5 chiều)**.
+
+Sơ đồ dưới đây minh họa các tầng hoạt động của mạng điều khiển:
+
+![Sơ đồ mạng nơ-ron layers của con lắc ngược](../assets/neural_network_layers_diagram.png)
+
+### Cơ chế hoạt động của các tầng mạng:
+1. **Input Layer (5 đầu vào)**: Nhận trạng thái hiện tại của hệ thống dưới dạng vectơ thực:
+   $$s = [x_{\text{motor}}, \sin(\theta), \cos(\theta), v_{\text{motor}}, v_{\text{pendulum}}]$$
+   * Việc sử dụng bộ đôi \(\sin(\theta), \cos(\theta)\) thay vì góc lệch tuyệt đối \(\theta\) giúp loại bỏ điểm gián đoạn tuần hoàn tại biên \(\pm\pi\), giúp mạng học mượt mà hơn.
+2. **Hidden Layers (Lớp ẩn kết nối đầy đủ)**:
+   * **Hidden Layer 1**: Gồm 32 nơ-ron kết nối đầy đủ (Fully Connected) kèm hàm kích hoạt phi tuyến tính (ví dụ: ReLU hoặc Tanh).
+   * **Hidden Layer 2**: Gồm 32 nơ-ron kết nối đầy đủ giúp mô hình hóa các tương tác động lực học phi tuyến phức tạp giữa cánh tay quay và con lắc tự do.
+3. **Output Layer (1 đầu ra)**:
+   * Xuất ra một giá trị duy nhất trong khoảng \([-1, 1]\) qua hàm kích hoạt Tanh.
+   * Hành động này được giải lượng tử hóa thành lượng nhích góc mục tiêu (\Delta\text{ position}):
+     $$\text{Target}_{\text{new}} = \text{clip}(\text{Target}_{\text{old}} + a \times \text{max\_action\_delta\_rad}, \pm 125^{\circ})$$
+     Cách thiết kế đầu ra dạng delta (nudge) thay vì vị trí tuyệt đối giúp giới hạn tốc độ thay đổi góc (slew rate), bảo vệ phần cứng động cơ bước khỏi bị giật đột ngột.
+
+---
+
+## 5. Hướng Dẫn Khắc Phục Sự Cố & Huấn Luyện Lại (Train/Fine-tune Guide)
+
+Nếu bạn có một bản lắp ráp phần cứng giống hệt (clone) nhưng khi nạp code trực tiếp từ repo lại không hoạt động (con lắc bị rung, mất bước, hoặc rơi tự do không tự cân bằng), nguyên nhân chính thường do **sự sai khác cơ học nhỏ (ma sát vòng bi, độ rơ khớp, công suất động cơ ở Vref khác nhau, hoặc hướng cảm biến/động cơ bị ngược)**.
+
+Dưới đây là quy trình khắc phục sự cố, huấn luyện lại từ đầu (Train from scratch) hoặc Tinh chỉnh (Fine-tune):
+
+### Bước 1: Xác minh phần cứng ban đầu (Cực kỳ quan trọng)
+Trước khi chạy bất kỳ thuật toán RL nào, bạn phải đảm bảo hệ tọa độ vật lý hoạt động đúng:
+1. **Kiểm tra chiều động cơ & cảm biến**:
+   - Quay cánh tay nằm ngang ngược chiều kim đồng hồ (nhìn từ trên xuống): giá trị góc động cơ (`motor_pos`) in ra phải **tăng dần (dương)**. Nếu giảm, hãy đảo ngược dây cuộn động cơ bước hoặc đảo cấu hình hướng trong firmware.
+   - Nghiêng con lắc sang phải: giá trị góc con lắc phải thay đổi đúng chiều.
+2. **Cân chỉnh điểm 0 (Zero-calibration)**:
+   - Khi cấp nguồn hoặc bấm nút Reset Arduino, **bắt buộc** con lắc phải treo thẳng đứng xuống dưới và đứng yên hoàn toàn. Arduino Nano lấy vị trí này làm điểm 0 của encoder góc con lắc (tương ứng với góc \(\pm\pi\) rad).
+3. **Kiểm tra dòng điện động cơ (Vref)**:
+   - Đo và chỉnh Vref trên driver bước (A4988/DRV8825) về khoảng **0.485V - 0.6V** để động cơ đủ lực kéo mà không bị nóng hoặc mất bước.
+
+### Bước 2: Chạy Nhận dạng hệ thống (System Identification - SysID)
+Mỗi thiết bị tự chế có ma sát vòng bi và mô-men quán tính riêng. Bạn cần chạy SysID để cập nhật các tham số vật lý thực tế vào trình mô phỏng:
+1. Nạp firmware `LowLevelServer.ino` lên Arduino Nano.
+2. Truy cập thư mục Python và khởi chạy Wizard:
+   ```bash
+   cd RotaryInvertedPendulum-python/src/rl
+   python sysid_wizard.py
+   ```
+3. Bộ Wizard sẽ tự động rung cánh tay và thu thập dữ liệu phản hồi bước (step response) và dao động tự do.
+4. Đầu ra của quá trình này sẽ tự động ghi đè và cập nhật tệp [sysid_params.json](file:///e:/AI-Models/QwenPaw/workspaces/default/coding_projects/rotary-inverted-pendulum/RotaryInvertedPendulum-python/src/rl/sysid_params.json).
+
+### Bước 3: Huấn luyện lại trong mô phỏng (Sim-to-Sim Curriculum)
+Sau khi có cấu hình vật lý thực tế của thiết bị của bạn trong `sysid_params.json`, ta chạy huấn luyện chính sách Giáo viên mới trong mô phỏng MuJoCo:
+1. Khởi chạy chương trình huấn luyện 3 giai đoạn:
+   ```bash
+   bash curriculum_train.sh
+   ```
+   *Quá trình này mất khoảng ~25 phút trên CPU máy tính. Kết quả xuất ra tệp `runs/<tên-phiên-chạy>/last.zip`.*
+
+### Bước 4: Tinh chỉnh bất đồng bộ trên thiết bị thực (Fine-tuning)
+Để lấp đầy khoảng cách giữa mô phỏng và thực tế (Sim-to-Real gap), chúng ta cần cho mô hình chạy trực tiếp trên thiết bị thực và tự sửa lỗi:
+1. Chạy lệnh tinh chỉnh bất đồng bộ:
+   ```bash
+   python finetune_async.py \
+       --policy runs/<thư-mục-chạy-mô-phỏng-mới>/last.zip \
+       --port <CỔNG_COM_CỦA_NANO> \
+       --episodes 50 \
+       --run-name async_rig_v1
+   ```
+2. **Lưu ý thực tế**: Lắng nghe tiếng động cơ bước. Nếu nghe tiếng kẹt kẹt hoặc rung dữ dội, nghĩa là gia tốc yêu cầu của mạng quá lớn gây mất bước. Hãy giảm `MOTOR_ACCELERATION` trong file `LowLevelServer.ino` và `RLControl.ino` từ 50,000 xuống 30,000 rồi nạp lại.
+3. Nếu con lắc đã có xu hướng cân bằng nhưng chưa vững, tiếp tục tinh chỉnh tích lũy từ buffer cũ:
+   ```bash
+   python finetune_async.py \
+       --policy runs/async_rig_v1/last.zip \
+       --resume-buffer runs/async_rig_v1/replay_buffer.pkl \
+       --port <CỔNG_COM_CỦA_NANO> \
+       --episodes 30 \
+       --run-name async_rig_v2
+   ```
+
+### Bước 5: Chưng cất & nạp code chạy độc lập (Distillation & Deployment)
+1. Chưng cất mô hình Giáo viên lớn thành mô hình Học sinh nhỏ 5 KB:
+   ```bash
+   python distill.py \
+       --teacher runs/async_rig_v2/last.zip \
+       --buffer runs/async_rig_v2/replay_buffer.pkl \
+       --out-dir runs/async_rig_v2/distill_student
+   ```
+2. Xuất trọng số mạng nơ-ron ra file header của Arduino:
+   ```bash
+   python export_weights.py \
+       --student runs/async_rig_v2/distill_student/student.pt \
+       --header ../../../RotaryInvertedPendulum-arduino/RLControl/policy_weights.h \
+       --source-name async_rig_v2/distill_student
+   ```
+3. Nạp code độc lập `RLControl.ino` lên Arduino Nano bằng Arduino IDE hoặc `arduino-cli`. Khi nạp xong, reset Arduino khi con lắc đang treo thẳng đứng xuống dưới và đứng yên để hiệu chuẩn góc.
+
+---
+
+## 6. Minh Họa Hệ Thống Điều Khiển Đồ Họa Cao Cấp
+
+Dưới đây là thiết kế phối cảnh 3D tổng quan về cấu trúc cơ khí và luồng phản hồi vòng kín của hệ thống con lắc ngược quay:
 
 ![Thiết kế đồ họa hệ thống Rotary Inverted Pendulum](../assets/rotary_pendulum_infographic.png)
