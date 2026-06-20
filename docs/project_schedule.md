@@ -19,15 +19,15 @@ gantt
     Đặt dịch vụ hoặc tự in 3D các chi tiết :active, des2, 2026-06-21, 4d
     Chuẩn bị công cụ hàn, dây nối      :active, des3, 2026-06-23, 3d
     section Tuần 2: Hàn mạch & Lắp ráp
-    Hàn bo mạch điều khiển (Nano + DRV8825) :todo, des4, 2026-06-28, 3d
-    Lắp ráp phần khung cơ khí & Động cơ    :todo, des5, 2026-07-01, 3d
+    Hàn bo mạch điều khiển (Nano + DRV8825) :des4, 2026-06-28, 3d
+    Lắp ráp phần khung cơ khí & Động cơ    :des5, 2026-07-01, 3d
      section Tuần 3: SysID & Đo đạc
-    Kiểm tra chiều động cơ & Đọc cảm biến I2C :todo, des6, 2026-07-05, 3d
-    Chạy nhận dạng hệ thống (SysID Wizard) :todo, des7, 2026-07-08, 4d
+    Kiểm tra chiều động cơ & Đọc cảm biến I2C :des6, 2026-07-05, 3d
+    Chạy nhận dạng hệ thống (SysID Wizard) :des7, 2026-07-08, 4d
     section Tuần 4: Train & Deploy
-    Huấn luyện Sim Curriculum (SAC)         :todo, des8, 2026-07-12, 2d
-    Tinh chỉnh Async Fine-tuning trên rig thực :todo, des9, 2026-07-14, 3d
-    Chưng cất (Distill) & Nạp Nano độc lập :todo, des10, 2026-07-17, 3d
+    Huấn luyện Sim Curriculum (SAC)         :des8, 2026-07-12, 2d
+    Tinh chỉnh Async Fine-tuning trên rig thực :des9, 2026-07-14, 3d
+    Chưng cất (Distill) & Nạp Nano độc lập :des10, 2026-07-17, 3d
 ```
 
 ---
