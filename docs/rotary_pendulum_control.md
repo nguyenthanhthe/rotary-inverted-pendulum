@@ -70,10 +70,10 @@ graph TD
     O <--> P
 ```
 
-### B. Sơ đồ khối kiến trúc chi tiết (Detailed Textbook Block Diagram)
-Dưới đây là sơ đồ khối chi tiết mô tả kiến trúc từ phần mềm, thuật toán, mô phỏng đến phần cứng, được thiết kế theo dạng lưới modular phẳng chuyên nghiệp (tham khảo phong cách AgentScope):
+### B. Sơ đồ khối kiến trúc tổng thể (Overall System Block Diagram)
+Dưới đây là sơ đồ khối tổng thể mô tả kiến trúc từ phần mềm, thuật toán, mô phỏng đến phần cứng, kết hợp phần cứng thực tế ở trung tâm với các nhánh tính năng bao quanh chuyên nghiệp (tham khảo phong cách AgentScope):
 
-![Sơ đồ khối tổng thể hệ thống Rotary Inverted Pendulum](../assets/rotary_pendulum_architecture_block_diagram.png)
+![Sơ đồ khối tổng thể hệ thống Rotary Inverted Pendulum](../assets/rotary_pendulum_system_hub_diagram.png)
 
 ---
 
@@ -217,14 +217,9 @@ Sau khi có cấu hình vật lý thực tế của thiết bị của bạn tro
 
 ---
 
-## 6. Sơ Đồ Vật Lý Hệ Thống & Minh Họa Đồ Họa (System Physical Diagram & Graphic Illustration)
+## 6. Sơ Đồ Vật Lý Hệ Thống (System Physical Diagram)
 
 ### A. Sơ đồ cơ học Textbook (Textbook Physical Diagram)
 Sơ đồ dưới đây biểu diễn cấu trúc cơ học của con lắc ngược quay Furuta với các tham số độ dài tay quay (\(L_1\)), độ dài con lắc (\(L_2\)) và các góc lệch (\(\alpha\), \(\theta\)):
 
 ![Sơ đồ vật lý con lắc ngược quay](../assets/rotary_pendulum_textbook_diagram.png)
-
-### B. Thiết kế phối cảnh 3D và luồng phản hồi vòng kín (3D Graphic Perspective)
-Dưới đây là thiết kế phối cảnh 3D tổng quan về cấu trúc cơ khí và luồng phản hồi vòng kín của hệ thống:
-
-![Thiết kế đồ họa hệ thống Rotary Inverted Pendulum](../assets/rotary_pendulum_infographic.png)
