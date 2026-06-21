@@ -23,6 +23,7 @@ Hệ thống con lắc ngược quay (Furuta Pendulum) trong dự án này sử 
 
 ## 2. Sơ Đồ Các Tầng Hệ Thống (Layers Architecture)
 
+### A. Sơ đồ liên tầng dạng cây (Layers Tree Diagram)
 Dưới đây là sơ đồ kiến trúc các tầng từ phần cứng cấp thấp đến thuật toán điều khiển cấp cao:
 
 ```mermaid
@@ -68,6 +69,11 @@ graph TD
     K <--> N
     O <--> P
 ```
+
+### B. Sơ đồ khối kiến trúc chi tiết (Detailed Textbook Block Diagram)
+Dưới đây là sơ đồ khối chi tiết mô tả kiến trúc từ phần mềm, thuật toán, mô phỏng đến phần cứng, được thiết kế theo dạng lưới modular phẳng chuyên nghiệp (tham khảo phong cách AgentScope):
+
+![Sơ đồ khối tổng thể hệ thống Rotary Inverted Pendulum](../assets/rotary_pendulum_architecture_block_diagram.png)
 
 ---
 
