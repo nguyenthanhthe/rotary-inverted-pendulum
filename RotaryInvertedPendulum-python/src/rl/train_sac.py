@@ -282,30 +282,30 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                         "operating point for this rig — see "
                         "docs/control_rate_selection.md for the principled selection.")
     p.add_argument("--max-accel-rad-s2", type=float, default=150.0,
-                   help="action ∈ [-1, 1] maps to angular accel ∈ [-max, +max]"
-                        " rad/s². Default 150 ≈ 76% of the motor's physical "
-                        "envelope (~196 rad/s² at 50 kSteps/s²). Bumped from "
+                   help="action in [-1, 1] maps to angular accel in [-max, +max]"
+                        " rad/s^2. Default 150 approx 76%% of the motor's physical "
+                        "envelope (~196 rad/s^2 at 50 kSteps/s^2). Bumped from "
                         "100 after observing the policy saturating accel_cmd "
                         "in the first accel-mode deployment.")
     p.add_argument("--max-velocity-rad-s", type=float, default=None,
                    help="motor angular-velocity saturation cap (rad/s). "
-                        "Default None → env default (5.0). Lower values "
+                        "Default None -> env default (5.0). Lower values "
                         "force the policy below the Kapitza parametric "
-                        "stabilisation regime, which requires a·ω above "
+                        "stabilisation regime, which requires a * omega above "
                         "a threshold proportional to sqrt(2gL). Capping "
                         "below the rig's natural Kapitza window directly "
                         "disrupts resonance-pumping policies.")
     p.add_argument("--reward-motor-vel-weight", type=float, default=None,
-                   help="penalty on motor_vel² in the reward. Default None "
-                        "→ env default (0.005). Bumping to e.g. 0.05 makes "
+                   help="penalty on motor_vel^2 in the reward. Default None "
+                        "-> env default (0.005). Bumping to e.g. 0.05 makes "
                         "the optimizer prefer policies that keep the motor "
                         "still, not just the pendulum upright. Targets the "
                         "'chattery but balanced' attractor directly.")
     p.add_argument("--dr-theta-bias-max-rad", type=float, default=None,
-                   help="Per-episode pendulum encoder θ-bias DR range "
-                        "(rad). Default None → env default "
-                        "(DR_THETA_BIAS_MAX_RAD = 0.05, i.e. ±2.9°, "
-                        "covering the rig's measured ±1.9° rest band "
+                   help="Per-episode pendulum encoder theta-bias DR range "
+                        "(rad). Default None -> env default "
+                        "(DR_THETA_BIAS_MAX_RAD = 0.05, i.e. +/-2.9 deg, "
+                        "covering the rig's measured +/-1.9 deg rest band "
                         "with headroom). Active in ALL stages "
                         "independent of --domain-randomization, because "
                         "encoder bias is always present on the rig and "
@@ -314,24 +314,24 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                         "uses 0.0 for a deterministic reference).")
     p.add_argument("--reward-stillness-bonus-weight", type=float, default=None,
                    help="Multiplicative stillness bonus weight. Default None "
-                        "→ 0 (disabled, canonical Quanser reward). When set "
-                        ">0, ADDS k · exp(-θ²/σ_θ²) · exp(-α̇²/σ_v²) to the "
+                        "-> 0 (disabled, canonical Quanser reward). When set "
+                        ">0, ADDS k * exp(-theta^2/sigma_theta^2) * exp(-alpha_dot^2/sigma_v^2) to the "
                         "reward. The product means a high bonus requires "
                         "BOTH theta and motor_vel near zero simultaneously, "
                         "directly penalising Kapitza-style resonance "
-                        "stabilisation (which has α̇ ≈ 3 rad/s during "
+                        "stabilisation (which has alpha_dot approx 3 rad/s during "
                         "balance). Suggested starting value: 5.0.")
     p.add_argument("--reward-motor-jerk-weight", type=float, default=None,
-                   help="penalty on (motor_vel_t - motor_vel_{t-1})² in "
-                        "the reward — physical motor jerk. NOT in the "
-                        "Quanser paper; default None → env default (0.0, "
+                   help="penalty on (motor_vel_t - motor_vel_{t-1})^2 in "
+                        "the reward -- physical motor jerk. NOT in the "
+                        "Quanser paper; default None -> env default (0.0, "
                         "disabled). Distinct from --reward-action-rate-weight "
                         "(command jerk). Try 0.01 as a gentle starting point.")
     p.add_argument("--reward-action-rate-weight", type=float, default=None,
-                   help="penalty on (action_t - action_{t-1})² in the reward. "
-                        "Default None → env default (0.0; disabled in accel "
+                   help="penalty on (action_t - action_{t-1})^2 in the reward. "
+                        "Default None -> env default (0.0; disabled in accel "
                         "mode). Re-enabling with a small value (e.g. 0.02) "
-                        "discourages chatter — risk is the 'entropy collapse "
+                        "discourages chatter -- risk is the 'entropy collapse "
                         "into low-reward basin' failure mode that motivated "
                         "the original disable in position mode; test on a "
                         "short run before committing to a full curriculum.")
