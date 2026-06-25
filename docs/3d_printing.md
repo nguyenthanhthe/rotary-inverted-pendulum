@@ -31,3 +31,21 @@ Hãy cắt dây nối dài hơn một chút so với mức bạn nghĩ là cần
 *   **Nắp (Lid):** **Đen nhám (Matte Black)** để khớp hoàn hảo với nền nhãn dán thang đo góc màu đen.
 *   **Cánh tay (Arm):** **Đỏ kim loại (Metallic Red)** hoặc **Cam Neon (Vibrant Orange)**. Màu sắc có độ tương phản cao (như trong ảnh mẫu) giúp hỗ trợ theo dõi bằng camera và quan sát bằng mắt thường.
 *   **Con lắc (Pendulum):** **Trắng mờ (Matte White)** hoặc **Bạc (Silver)**.
+
+---
+
+## Cân Chỉnh Kích Thước & Kinh Nghiệm Thực Tế (Critical Mechanical Adjustments)
+
+Để hệ thống hoạt động chính xác và không có sai số cơ học, bạn nên áp dụng các điều chỉnh thực tế sau khi in 3D:
+
+### 1. Khử độ rơ cơ khí đầu trục chữ D (D-hole backlash prevention)
+*   **Vấn đề**: Trong bản vẽ thiết kế CAD gốc, lỗ chữ D trên cánh tay (Arm) được thiết kế với đường kính 5.3 mm và khoảng cách cạnh phẳng là 4.8 mm. Khi in 3D thực tế, dung sai của máy in sẽ làm lỗ này hơi rộng hơn một chút, dẫn đến **độ rơ cơ khí (backlash)** giữa trục động cơ bước và cánh tay. Độ rơ này sẽ trực tiếp làm giảm chất lượng điều khiển LQR hoặc RL (khi motor đảo chiều, cánh tay không di chuyển ngay lập tức).
+*   **Giải pháp**: Hãy chỉnh sửa bản vẽ CAD (ví dụ trên OnShape) hoặc bù trừ dung sai lúc in để giảm kích thước lỗ chữ D xuống **đường kính 5.1 mm** và **khoảng cách cạnh phẳng 4.6 mm** (thông số thực tế của trục motor bước là 5.0 mm đường kính và 4.5 mm phẳng). Điều này giúp cánh tay lắp khít hoàn toàn vào trục và loại bỏ hoàn toàn độ rơ.
+
+### 2. Hướng in Nắp (Lid) để có bề mặt đẹp nhất
+*   **Vấn đề**: Việc in nắp theo chiều thuận (mặt trên hướng lên) sẽ yêu cầu rất nhiều support bên dưới và làm bề mặt nắp bị sần sùi do tiếp xúc với lớp support, làm mất đi độ thẩm mỹ cao cấp của thiết bị.
+*   **Giải pháp**: Hãy loại bỏ các chi tiết chặn/luồn dây (Stop/Wire-guide) trong file CAD (sau lệnh Extrude 4) và **in úp ngược nắp** (mặt trên của nắp áp thẳng xuống bàn in). Điều này giúp mặt trên của nắp phẳng mịn tuyệt đối và hoàn toàn không cần dùng vật liệu support. Các chi tiết Stop/Wire-guide nếu cần thiết có thể thiết kế và in riêng rồi ghép vào sau (thực tế vận hành thường không cần).
+
+### 3. Đi dây cảm biến tránh vướng víu
+*   **Giải pháp**: Thay vì luồn dây qua bộ dẫn hướng dây (Wire-guide) trên nắp, bạn hãy lắp cánh tay nhô cao lên khoảng 8 mm so với bề mặt nắp, sau đó quấn dây của cảm biến góc (AS5600) xung quanh trục động cơ vài vòng trước khi đi dây ra ngoài. Cách này cho phép cánh tay xoay tự do nhiều vòng mà không bị căng dây hay cản trở hành trình cơ học.
+
