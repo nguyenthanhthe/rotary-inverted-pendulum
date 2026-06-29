@@ -15,12 +15,12 @@ gantt
     title Lộ Trình Chế Tạo & Huấn Luyện Con Lắc Ngược Quay
     dateFormat  YYYY-MM-DD
     section Tuần 1: Chuẩn bị & In 3D
-    Đặt mua linh kiện còn thiếu       :active,   des1, 2026-06-20, 2d
-    Đặt dịch vụ hoặc tự in 3D các chi tiết :active, des2, 2026-06-21, 4d
-    Chuẩn bị công cụ hàn, dây nối      :active, des3, 2026-06-23, 3d
+    Đặt mua linh kiện còn thiếu       :done,   des1, 2026-06-20, 2d
+    Đặt dịch vụ hoặc tự in 3D các chi tiết :done, des2, 2026-06-21, 4d
+    Chuẩn bị công cụ hàn, dây nối      :done, des3, 2026-06-23, 3d
     section Tuần 2: Hàn mạch & Lắp ráp
-    Hàn bo mạch điều khiển (Nano + DRV8825) :des4, 2026-06-28, 3d
-    Lắp ráp phần khung cơ khí & Động cơ    :des5, 2026-07-01, 3d
+    Hàn bo mạch điều khiển (Nano + DRV8825) :active, des4, 2026-06-28, 3d
+    Lắp ráp phần khung cơ khí & Động cơ    :active, des5, 2026-07-01, 3d
      section Tuần 3: SysID & Đo đạc
     Kiểm tra chiều động cơ & Đọc cảm biến I2C :des6, 2026-07-05, 3d
     Chạy nhận dạng hệ thống (SysID Wizard) :des7, 2026-07-08, 4d
@@ -34,36 +34,32 @@ gantt
 
 ## 🛠️ Chi Tiết Nhiệm Vụ Từng Tuần
 
-### Tuần 1: Chuẩn Bị Linh Kiện & In 3D (20/06 - 27/06)
+### Tuần 1: Chuẩn Bị Linh Kiện & In 3D (20/06 - 27/06) - **[HOÀN THÀNH]**
 *   **Mục tiêu**: Hoàn tất việc mua sắm phần cứng, in 3D các chi tiết nhựa để có đầy đủ phôi cơ khí khi các linh kiện điện tử về tới nơi.
 *   **Các nhiệm vụ cụ thể**:
-    1.  **Đặt mua ngay các linh kiện còn thiếu**:
-        *   Động cơ bước NEMA17 (khuyên dùng mã `NEMA17HS3401S` thân ngắn để nhẹ rig).
-        *   Mạch driver DRV8825 (hoặc A4988).
-        *   Cảm biến AS5600 12-bit (chọn link có kèm nam châm 6mm).
-        *   Vòng bi bạc đạn 608 (1 cái cho khớp nối con lắc).
-        *   Bo mạch lỗ phíp FR4 (40x60mm) và Nhôm tản nhiệt động cơ (40x40x11mm).
-    2.  **In 3D các bộ phận nhựa**:
-        *   Tải các tệp STL trong thư mục `meshes/` mang đi in dịch vụ hoặc tự in nhựa PLA (Infill nên cài đặt \(\ge 20\%\), 3 đường tường bao - wall lines để bảo đảm độ cứng cơ học).
-        *   Các bộ phận gồm: Cánh tay (Arm), liên kết con lắc (Pendulum link), đế (Base), nắp (Lid) và khớp nối cảm biến.
-    3.  **Chuẩn bị công cụ**: Mỏ hàn, thiếc hàn, đồng hồ vạn năng (để đo thông mạch và chỉnh Vref của driver).
+    - [x] **Đặt mua ngay các linh kiện còn thiếu**: Động cơ bước NEMA17, Driver DRV8825, Cảm biến AS5600 kèm nam châm, Vòng bi 608, Phíp lỗ FR4, nhôm tản nhiệt (đã đầy đủ linh kiện).
+    - [x] **In 3D các bộ phận nhựa**: Cánh tay (Arm), liên kết con lắc (Pendulum link), đế (Base), nắp (Lid) và khớp nối cảm biến (đã in xong và vừa khít).
+    - [x] **Chuẩn bị công cụ**: Mỏ hàn (đã phục hồi), dây điện Teflon 24AWG, thiếc hàn, bùi nhùi đồng.
 
 ---
 
-### Tuần 2: Hàn Mạch Điện Tử & Lắp Ráp Cơ Khí (28/06 - 04/07)
-*   **Mục tiêu**: Hoàn thành phần cứng vật lý của hệ thống.
+### Tuần 2: Hàn Mạch Điện Tử & Lắp Ráp Cơ Khí (28/06 - 04/07) - **[ĐANG THỰC HIỆN]**
+*   **Mục tiêu**: Hoàn thành phần cứng vật lý của hệ thống, cắt gọn bo mạch PCB lỗ vừa khít hộp đựng.
 *   **Các nhiệm vụ cụ thể**:
-    1.  **Hàn bo mạch**:
-        *   Hàn rào cắm cái (Female header pins) lên PCB lỗ để có thể cắm/rút Arduino Nano và Driver DRV8825 dễ dàng (đề phòng cháy chập có thể thay thế ngay).
-        *   Hàn giắc nguồn DC cái, công tắc bập bênh Kd105 (nối tiếp trên đường 12V cấp cho chân VMOT của driver).
-        *   Hàn hai tụ lọc nguồn (tụ hóa 22µF song song tụ sứ 104) sát chân nguồn 12V của Driver để triệt tiêu nhiễu xung dòng điện lúc động cơ đảo chiều.
-        *   Hàn đường I2C (SDA/SCL) nối từ Arduino Nano (A4/A5) ra rào cắm cảm biến AS5600.
-    2.  **Lắp ráp cơ khí**:
-        *   Lắp động cơ NEMA17 vào đế nhựa. Dán tản nhiệt nhôm vào mặt sau động cơ.
-        *   Lắp cánh tay quay (Arm) vào trục động cơ bước.
-        *   Ép vòng bi 608 vào khớp nối cánh tay và thanh lắc.
-        *   Nhét đồng xu 2-pence vào đầu mút thanh lắc làm đối trọng (đã được tính toán khối lượng trong file URDF).
-        *   Gắn cảm biến AS5600 đối diện với nam châm (khoảng cách lý tưởng 1.5 - 2 mm).
+    1.  **Cắt phíp lỗ & Hàn bo mạch**:
+        - [/] **Cắt mạch lỗ PCB**: Vì mạch lỗ PCB thực tế to hơn hộp chứa, hãy dùng thước sắt và dao rọc giấy khía mạnh nhiều lần ở cả 2 mặt dọc theo rãnh giữa các hàng lỗ (khoảng 40x60mm hoặc đo lọt lòng hộp), sau đó đặt mép cắt sát cạnh bàn và bẻ nhẹ để mạch gãy thẳng tắp dọc theo rãnh. Dùng giũa hoặc giấy ráp mài mịn cạnh cắt.
+        - [ ] **Hàn rào cắm cái (Female header pins)**: Lên PCB lỗ cho Arduino Nano và Driver DRV8825 để cắm rút linh hoạt, dễ thay thế khi có cháy chập.
+        - [ ] **Hàn giắc nguồn DC cái & Công tắc bập bênh**: Nối tiếp công tắc (đã lắp trên thành hộp) trên đường nguồn 12V cấp cho chân VMOT của driver.
+        - [ ] **Hàn hai tụ lọc nguồn (tụ hóa 22µF // tụ sứ 104)**: Sát chân VMOT-GND của Driver để triệt nhiễu đảo chiều động cơ.
+        - [ ] **Hàn đường I2C (SDA/SCL)**: Nối từ A4/A5 của Arduino Nano ra rào cắm kết nối cảm biến AS5600.
+    2.  **Lắp ráp cơ khí & Xử lý từ tính cảm biến**:
+        - [ ] **Lắp động cơ NEMA17**: Lắp động cơ vào đế nhựa và dán tản nhiệt nhôm vào mặt sau.
+        - [ ] **Lắp ráp cánh tay và khớp nối**: Ép vòng bi 608 vào khớp nối. Chú ý sử dụng khớp nối nhựa in 3D để giữ khoảng cách cách ly giữa vòng bi sắt từ và nam châm của AS5600 nhằm tránh làm méo đường sức từ.
+        - [ ] **Nhét đồng xu đối trọng**: Lắp chặt đồng xu vào đầu thanh lắc.
+        - [ ] **Căn chỉnh & Lắp AS5600**:
+            * *Xác định cực nam châm:* Nam châm kèm theo AS5600 là loại hướng tâm (diametrically magnetized). Chiều quay tuyệt đối ban đầu không quan trọng (vì cảm biến quay 360 độ tự do), góc lệch offset sẽ được phần mềm tự động hiệu chuẩn.
+            * *Khoảng cách cảm biến:* Đảm bảo khoảng cách từ mặt nam châm đến chip AS5600 nằm trong khoảng **1.5 mm - 2.0 mm**.
+            * *Chân hướng quay (DIR):* Mặc định nối GND là tăng góc khi quay thuận chiều kim đồng hồ. Nếu sau khi test bị ngược hướng, ta có thể nối chân `DIR` lên VCC hoặc đảo chiều bằng code.
 
 ---
 
